@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# 抓取下来的鸿蒙开发文档语料(~2G,含本地化配图),只留在本地,不推送到远端仓库
+docs/harmonyos-guides/
