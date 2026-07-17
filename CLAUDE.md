@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository purpose
 
-HarmonyOS(鸿蒙)应用开发学习与实践仓库。当前仓库的核心资产是本地沉淀的官方文档语料(`docs/harmonyos-guides/`),供后续在此基础上构建实际的 HarmonyOS/ArkTS 应用工程。目前仓库内还没有任何应用代码或构建工程。
+本仓库的第一因(见 [`docs/adr/0001-founding-rationale-and-division-of-labor.md`](docs/adr/0001-founding-rationale-and-division-of-labor.md)):**不是让人类学会手写 HarmonyOS/ArkTS 代码,而是构建并打磨一套 vibe coding 式的人机协作开发流程——以 AI 为实现者产出真实可运行的 HarmonyOS 应用,人类精进的是驾驭这套协作流程(全局约束设定、设计讨论、GitHub Flow)的能力。** 当前仓库的核心资产是本地沉淀的官方文档语料(`docs/harmonyos-guides/`),为 AI 实现提供准确的 API 依据;目前仓库内还没有任何应用代码或构建工程。
 
 ## Documentation architecture
 
@@ -25,12 +25,13 @@ HarmonyOS(鸿蒙)应用开发学习与实践仓库。当前仓库的核心资产
 
 ## Development workflow
 
-本仓库(以及后续在此基础上开发的应用工程)遵循 **GitHub Flow**:
+本仓库(以及后续在此基础上开发的应用工程)遵循 **GitHub Flow**,人机分工细则见 [`docs/adr/0002-github-flow-collaboration-mechanics.md`](docs/adr/0002-github-flow-collaboration-mechanics.md):
 
 - `main` 分支始终保持可运行/可部署状态,不直接在 `main` 上开发。
-- 新功能或修复从 `main` 切出一个描述性命名的分支(如 `feature/xxx`、`fix/xxx`)。
-- 在分支上提交并推送;需要讨论或反馈时尽早开 PR(可以是 draft PR)。
-- 通过评审(以及适用的检查)后合并回 `main`,合并方式不强制,以仓库当时的约定为准。
+- 主干:人类给方向 → grilling 讨论定设计/约束 → 写入 PRD/issue → 人类手动把 issue 分派给"弱 session"实现并开 PR → "强 agent"(主 session)验收。issue 粒度与分支/PR 不强制一一对应。
+- **Dispatch 默认人工**:强 agent 不自动派发 subagent 完成 issue,除非人类显式批准(如 "ultracode" 模式)。
+- **合并默认 AI 自主**:强 agent 验收通过即可直接合并、关闭 PR,无需人类点头;只有 PR 触及「仓库自身运行机制文件(`CLAUDE.md`/`docs/adr/*`/`docs/agents/*`/workflow 定义)」或「安全/不可逆内容」这两类之一时,才打 `ready-for-human` 交给人类合并。
+- **证据优先级**:`docs/harmonyos-guides/` 等官方文档 > 人类与 AI 讨论出的 issue/PRD > AI 自主细粒度补充。issue 与官方文档冲突时以文档为准,并在 PR 中显式标注偏离,不悄悄照做也不悄悄改写 issue。
 - 合并后删除该功能分支。
 
 ## Agent skills
@@ -45,4 +46,4 @@ Issues 用 GitHub Issues(`gh` CLI),仓库 `github.com/Habit130/harmonyos-dev` �
 
 ### Domain docs
 
-单一上下文(single-context)布局:`CONTEXT.md` + `docs/adr/` 计划放在仓库根目录,目前尚未创建,由 `/domain-modeling` 在术语或架构决策实际出现时按需生成。见 `docs/agents/domain.md`。
+单一上下文(single-context)布局。`CONTEXT.md` 尚未创建(还没有 HarmonyOS 应用领域术语需要收录);`docs/adr/` 已有 `0001`(第一因与人机分工总纲)、`0002`(GitHub Flow 协作机制细则),两者适用于仓库里几乎所有工作,动手前先读。见 `docs/agents/domain.md`。

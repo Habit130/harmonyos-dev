@@ -8,10 +8,8 @@ One `CONTEXT.md` + `docs/adr/` at the repo root (no `CONTEXT-MAP.md`, no monorep
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, if it exists.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
-
-Neither exists yet. **Proceed silently** — don't flag their absence, don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved, once there's an actual app to model.
+- **`CONTEXT.md`** at the repo root, if it exists. Doesn't exist yet — no HarmonyOS app-domain term has been resolved. **Proceed silently** about its absence; the `/domain-modeling` skill creates it lazily once there's an actual app to model.
+- **`docs/adr/`** — read ADRs that touch the area you're about to work in, always. `0001` (founding rationale, human/AI division of labor) and `0002` (GitHub Flow collaboration mechanics — dispatch, merge authority, gated categories, source-of-truth order) apply to essentially everything done in this repo; read them before proposing workflow, tooling, or process changes.
 
 ## Use the glossary's vocabulary
 
