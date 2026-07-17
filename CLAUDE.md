@@ -27,12 +27,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 本仓库(以及后续在此基础上开发的应用工程)遵循 **GitHub Flow**,人机分工细则见 [`docs/adr/0002-github-flow-collaboration-mechanics.md`](docs/adr/0002-github-flow-collaboration-mechanics.md):
 
-- `main` 分支始终保持可运行/可部署状态,不直接在 `main` 上开发。
+- `main` 分支始终保持可运行/可部署状态,不直接在 `main` 上开发。**`main` 已配置分支保护:禁止直接推送,必须走 PR**;没有配置"必须 approval"(单账号自审无法自我批准,配了会死锁)——review 实质发生在强 agent/`advisor` 层,不是 GitHub 原生多人 review,见 ADR-0002。
 - 主干:人类给方向 → grilling 讨论定设计/约束 → 写入 PRD/issue → 人类手动把 issue 分派给"弱 session"实现并开 PR → "强 agent"(主 session)验收。issue 粒度与分支/PR 不强制一一对应。
 - **Dispatch 默认人工**:强 agent 不自动派发 subagent 完成 issue,除非人类显式批准(如 "ultracode" 模式)。
 - **合并默认 AI 自主**:强 agent 验收通过即可直接合并、关闭 PR,无需人类点头;只有 PR 触及「仓库自身运行机制文件(`CLAUDE.md`/`docs/adr/*`/`docs/agents/*`/workflow 定义)」或「安全/不可逆内容」这两类之一时,才打 `ready-for-human` 交给人类合并。
-- **证据优先级**:`docs/harmonyos-guides/` 等官方文档 > 人类与 AI 讨论出的 issue/PRD > AI 自主细粒度补充。issue 与官方文档冲突时以文档为准,并在 PR 中显式标注偏离,不悄悄照做也不悄悄改写 issue。
+- **证据优先级**:`docs/harmonyos-guides/` 等官方文档 > 人类与 AI 讨论出的 issue/PRD > AI 自主细粒度补充。issue 与官方文档冲突时以文档为准,并在 PR 中显式标注偏离,不悄悄照做也不悄悄改写 issue。**一级证据只在本机**(该语料 gitignore、不推送),弱/强 session 必须在同步过这份语料的机器上运行。
 - 合并后删除该功能分支。
+- **有意推迟、非遗漏**:commit message 规范、PR 描述模板、CI/自动化检查、weak session 的 handoff prompt 格式,留到第一个真实 issue 出现时再定(`to-prd`/`to-issues` 已自带 PRD/issue 模板可直接复用)。ADR 修订机制本身就是处理这类后续问题的入口,不代表现在没想清楚。
 
 ## Agent skills
 
@@ -42,7 +43,7 @@ Issues 用 GitHub Issues(`gh` CLI),仓库 `github.com/Habit130/harmonyos-dev` �
 
 ### Triage labels
 
-沿用五个标准 triage 角色的默认标签字符串(`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`),尚未做仓库特定的改名映射。见 `docs/agents/triage-labels.md`。
+沿用标准的 2 个分类角色(`bug` / `enhancement`)+ 5 个状态角色(`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`)默认标签字符串,尚未做仓库特定的改名映射。见 `docs/agents/triage-labels.md`。
 
 ### Domain docs
 
