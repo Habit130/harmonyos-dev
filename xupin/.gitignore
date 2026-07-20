@@ -1,0 +1,15 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+
+# 含自动签名的 signingConfigs(加密密码 + 本机 ~/.ohos/config 路径),不进公开仓库历史
+/build-profile.json5
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
