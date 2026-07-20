@@ -46,10 +46,13 @@ struct Index {
 
   @Builder
   keyButton(label: string) {
-    Button(label)
+    Text(label)
       .fontSize(18)
       .fontColor(Color.Black)
       .backgroundColor(Color.White)
+      .borderRadius(6)
+      .textAlign(TextAlign.Center)
+      .height(44)
       .layoutWeight(1)
       .margin(2)
       .onClick(() => this.insert(label))
