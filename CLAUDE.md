@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Issue tracker
 
-Issues 用 GitHub Issues(`gh` CLI),仓库 `github.com/Habit130/harmonyos-dev` 为 **private**;不把外部 PR 当作 triage 入口(个人学习仓库,无外部协作者)。见 `docs/agents/issue-tracker.md`。
+Issues 用 GitHub Issues(`gh` CLI),仓库 `github.com/Habit130/harmonyos-dev` 为 **public**(免费版 private 仓库不支持分支保护,为了让"禁止直推 main"技术强制而非只靠约定,改为公开);不把外部 PR 当作 triage 入口(个人学习仓库,无外部协作者)。见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels
 
