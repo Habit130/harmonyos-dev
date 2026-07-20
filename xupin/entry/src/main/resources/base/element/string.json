@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "label"
+    },
+    {
+      "name": "ime_label",
+      "value": "序拼"
+    },
+    {
+      "name": "ime_description",
+      "value": "序拼输入法服务"
+    },
+    {
+      "name": "ime_subtype_label",
+      "value": "序拼"
+    }
+  ]
+}

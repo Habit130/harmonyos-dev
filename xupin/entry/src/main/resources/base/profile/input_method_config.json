@@ -1,0 +1,10 @@
+{
+  "subtypes": [
+    {
+      "id": "XupinSubtype",
+      "label": "$string:ime_subtype_label",
+      "locale": "zh-CN",
+      "mode": "lower"
+    }
+  ]
+}
