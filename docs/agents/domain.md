@@ -8,12 +8,12 @@ One `CONTEXT.md` + `docs/adr/` at the repo root (no `CONTEXT-MAP.md`, no monorep
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, if it exists. Doesn't exist yet — no HarmonyOS app-domain term has been resolved. **Proceed silently** about its absence; the `/domain-modeling` skill creates it lazily once there's an actual app to model.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in, always. `0001` (founding rationale, human/AI division of labor) and `0002` (GitHub Flow collaboration mechanics — dispatch, merge authority, gated categories, source-of-truth order) apply to essentially everything done in this repo; read them before proposing workflow, tooling, or process changes.
+- **`CONTEXT.md`** at the repo root — exists, holds the domain glossary for 序拼(XùPīn), the repo's first app. Read it before working on anything app-domain-related.
+- **`docs/adr/`** — read ADRs that touch the area you're about to work in, always. `0001` (founding rationale, human/AI division of labor) and `0002` (GitHub Flow collaboration mechanics — dispatch, merge authority, gated categories, source-of-truth order) apply to essentially everything done in this repo; `0003` (IME app architecture, security mode) and `0004` (dictionary data source, license) apply specifically to the 序拼 app. Read them before proposing workflow, tooling, or process changes, or before implementing the app.
 
 ## Use the glossary's vocabulary
 
-Once `CONTEXT.md` exists: when your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined there. Don't drift to synonyms the glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
 
 ## Flag ADR conflicts
 

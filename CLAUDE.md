@@ -47,4 +47,4 @@ Issues 用 GitHub Issues(`gh` CLI),仓库 `github.com/Habit130/harmonyos-dev` �
 
 ### Domain docs
 
-单一上下文(single-context)布局。`CONTEXT.md` 尚未创建(还没有 HarmonyOS 应用领域术语需要收录);`docs/adr/` 已有 `0001`(第一因与人机分工总纲)、`0002`(GitHub Flow 协作机制细则),两者适用于仓库里几乎所有工作,动手前先读。见 `docs/agents/domain.md`。
+单一上下文(single-context)布局。`CONTEXT.md` 已建立,收录序拼(XùPīn,仓库第一个应用工程)的领域术语;`docs/adr/` 已有 `0001`(第一因与人机分工总纲)、`0002`(GitHub Flow 协作机制细则)——两者适用于仓库里几乎所有工作,动手前先读——以及 `0003`(输入法应用架构与安全模式)、`0004`(词典数据来源与协议),适用于序拼应用的具体实现。见 `docs/agents/domain.md`。
