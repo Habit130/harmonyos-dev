@@ -21,6 +21,7 @@ export default function candidateGeneratorTest() {
       const results = generateCandidates('beijing', dict);
       expect(results.length).assertEqual(2);
       expect(results[0].word).assertEqual('北京');
+      expect(results[0].matchedLength).assertEqual(7); // whole buffer, "beijing".length
       expect(results[1].word).assertEqual('背景');
     });
 
@@ -39,6 +40,9 @@ export default function candidateGeneratorTest() {
       const results = generateCandidates('beijingshi', dict);
       expect(results.length).assertEqual(2);
       expect(results[0].word).assertEqual('北京');
+      // Matched only the "beijing" prefix (7 chars), not the full 10-char buffer — the
+      // trailing "shi" must stay in the composition buffer on confirm (issue #13, #6).
+      expect(results[0].matchedLength).assertEqual(7);
       expect(results[1].word).assertEqual('背景');
     });
 

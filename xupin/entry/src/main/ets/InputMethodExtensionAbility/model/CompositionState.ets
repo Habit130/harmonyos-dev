@@ -20,9 +20,12 @@ export interface BackspaceResult {
  *
  * Backspace semantics (PRD acceptance criteria):
  * - composing (buffer non-empty): removes the last typed pinyin letter.
- * - not composing (buffer empty): removes the last *committed* segment (a candidate word,
- *   or a literal space/punctuation) from the target field — tracked via `history` since
- *   we have no way to read the target field's existing content back.
+ * - not composing (buffer empty), with history: removes the last *committed* segment (a
+ *   candidate word, or a literal space/punctuation) from the target field — tracked via
+ *   `history` since we have no way to read the target field's existing content back.
+ * - not composing, with no history (e.g. content in the field predates this composition
+ *   session): falls back to deleting 1 character ahead of the cursor, the standard IME
+ *   backspace default, rather than doing nothing.
  */
 export class CompositionState {
   private buffer: string[] = [];
@@ -41,12 +44,14 @@ export class CompositionState {
   }
 
   /**
-   * Confirms `text` (a candidate word, or a literal space/punctuation), clears the
-   * composition buffer, and records it for future backspace. Returns `text` so the
+   * Confirms `text` (a candidate word, or a literal space/punctuation), trims the leading
+   * `matchedLength` characters it covers off the composition buffer, and records it for
+   * future backspace. Any buffer characters beyond `matchedLength` (a candidate that only
+   * covered a prefix of the buffer) stay put, still composing. Returns `text` so the
    * caller can insert it into the target field.
    */
-  confirm(text: string): string {
-    this.buffer = [];
+  confirm(text: string, matchedLength: number): string {
+    this.buffer = this.buffer.slice(matchedLength);
     this.history.push(text);
     return text;
   }
@@ -58,7 +63,7 @@ export class CompositionState {
     }
     const last = this.history.pop();
     if (last === undefined) {
-      return { handledInBuffer: false, deleteLength: 0 };
+      return { handledInBuffer: false, deleteLength: 1 };
     }
     return { handledInBuffer: false, deleteLength: last.length };
   }

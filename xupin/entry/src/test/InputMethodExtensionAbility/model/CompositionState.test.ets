@@ -12,15 +12,27 @@ export default function compositionStateTest() {
       expect(state.isComposing()).assertTrue();
     });
 
-    it('clears the buffer and records history on confirm', 0, () => {
+    it('clears the buffer and records history on a full-buffer confirm', 0, () => {
       const state = new CompositionState();
       state.typeLetter('b');
       state.typeLetter('e');
       state.typeLetter('i');
-      const inserted = state.confirm('北');
+      const inserted = state.confirm('北', 3);
       expect(inserted).assertEqual('北');
       expect(state.compositionText).assertEqual('');
       expect(state.isComposing()).assertFalse();
+    });
+
+    it('confirm only trims the matched prefix, leaving unmatched letters composing', 0, () => {
+      // Mirrors the "xianzaiba" repro from issue #13: a candidate only covers a prefix of
+      // the typed buffer, so the trailing unmatched letters must stay in the buffer
+      // instead of being silently dropped.
+      const state = new CompositionState();
+      'xianzaiba'.split('').forEach((letter: string) => state.typeLetter(letter));
+      const inserted = state.confirm('现在', 7); // covers "xianzai", not the trailing "ba"
+      expect(inserted).assertEqual('现在');
+      expect(state.compositionText).assertEqual('ba');
+      expect(state.isComposing()).assertTrue();
     });
 
     it('backspace while composing removes only the last pinyin letter', 0, () => {
@@ -39,23 +51,23 @@ export default function compositionStateTest() {
       state.typeLetter('b');
       state.typeLetter('e');
       state.typeLetter('i');
-      state.confirm('北京'); // a 2-character candidate word
+      state.confirm('北京', 3); // a 2-character candidate word, full-buffer match
 
       const result = state.backspace();
       expect(result.handledInBuffer).assertFalse();
       expect(result.deleteLength).assertEqual(2);
     });
 
-    it('backspace with an empty buffer and no history is a no-op', 0, () => {
+    it('backspace with an empty buffer and no history falls back to deleting 1 character', 0, () => {
       const state = new CompositionState();
       const result = state.backspace();
       expect(result.handledInBuffer).assertFalse();
-      expect(result.deleteLength).assertEqual(0);
+      expect(result.deleteLength).assertEqual(1);
     });
 
     it('literal confirms (space/punctuation) are tracked for backspace too', 0, () => {
       const state = new CompositionState();
-      state.confirm('，');
+      state.confirm('，', 0);
       const result = state.backspace();
       expect(result.handledInBuffer).assertFalse();
       expect(result.deleteLength).assertEqual(1);

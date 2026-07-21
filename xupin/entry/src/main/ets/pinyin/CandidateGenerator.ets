@@ -1,6 +1,6 @@
 import { Dictionary } from './Dictionary';
 import { segment } from './Segmenter';
-import { CandidateEntry } from './types';
+import { CandidateEntry, DictionaryEntry } from './types';
 
 /**
  * Ranked candidates for the current pinyin composition buffer.
@@ -28,17 +28,26 @@ export function generateCandidates(buffer: string, dictionary: Dictionary): Cand
 
   const direct = dictionary.lookup(buffer);
   if (direct.length > 0) {
-    return direct;
+    return withMatchedLength(direct, buffer.length);
   }
 
   const prefixLengths = collectPrefixLengths(paths);
   for (let i = 0; i < prefixLengths.length; i++) {
-    const hits = dictionary.lookup(buffer.substring(0, prefixLengths[i]));
+    const prefixLength = prefixLengths[i];
+    const hits = dictionary.lookup(buffer.substring(0, prefixLength));
     if (hits.length > 0) {
-      return hits;
+      return withMatchedLength(hits, prefixLength);
     }
   }
   return [];
+}
+
+// Tags each dictionary hit with how many leading buffer characters it actually covers, so
+// CompositionState.confirm() can trim only that portion instead of the whole buffer.
+function withMatchedLength(entries: DictionaryEntry[], matchedLength: number): CandidateEntry[] {
+  return entries.map((entry: DictionaryEntry): CandidateEntry => {
+    return { word: entry.word, weight: entry.weight, matchedLength };
+  });
 }
 
 // Distinct syllable-boundary lengths shorter than the full buffer, reachable by any legal

@@ -36,6 +36,11 @@ export default class InputMethodService extends InputMethodExtensionAbility {
       (kbController: inputMethodEngine.KeyboardController, client: inputMethodEngine.InputClient) => {
         hilog.info(DOMAIN, TAG, 'inputStart: bound to a text field');
         inputClientHolder.setClient(client);
+        // Signals the panel (Index.ets) to reset its composition buffer/candidates/history
+        // for the newly bound field — see Index.ets's compositionResetSeq for why AppStorage
+        // is the bridge. Key literal must match the one Index.ets links to.
+        const seq = AppStorage.get<number>('xupinCompositionResetSeq') ?? 0;
+        AppStorage.setOrCreate('xupinCompositionResetSeq', seq + 1);
       });
     inputMethodEngine.getInputMethodAbility().on('inputStop', () => {
       hilog.info(DOMAIN, TAG, 'inputStop: unbound from text field');

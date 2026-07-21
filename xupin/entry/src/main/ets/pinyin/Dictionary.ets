@@ -1,4 +1,4 @@
-import { CandidateEntry } from './types';
+import { DictionaryEntry } from './types';
 
 /**
  * Pinyin-key -> candidate word lookup. Pure and IO-free: construct it from already-read
@@ -6,9 +6,9 @@ import { CandidateEntry } from './types';
  * stays unit-testable off-device (see RawFileDictionaryLoader for the on-device loader).
  */
 export class Dictionary {
-  private readonly entries: Map<string, CandidateEntry[]>;
+  private readonly entries: Map<string, DictionaryEntry[]>;
 
-  private constructor(entries: Map<string, CandidateEntry[]>) {
+  private constructor(entries: Map<string, DictionaryEntry[]>) {
     this.entries = entries;
   }
 
@@ -18,7 +18,7 @@ export class Dictionary {
    * guarantees this), so lookup() does no runtime sorting.
    */
   static parse(text: string): Dictionary {
-    const entries = new Map<string, CandidateEntry[]>();
+    const entries = new Map<string, DictionaryEntry[]>();
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -42,7 +42,7 @@ export class Dictionary {
     return new Dictionary(entries);
   }
 
-  lookup(pinyinKey: string): CandidateEntry[] {
+  lookup(pinyinKey: string): DictionaryEntry[] {
     return this.entries.get(pinyinKey) ?? [];
   }
 }
