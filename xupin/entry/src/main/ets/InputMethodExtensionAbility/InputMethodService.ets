@@ -6,11 +6,14 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import { inputClientHolder } from './model/InputClientHolder';
 import { dictionaryHolder } from './model/DictionaryHolder';
+import { bigramModelHolder } from './model/BigramModelHolder';
 import { Dictionary } from '../pinyin/Dictionary';
+import { BigramModel } from '../pinyin/BigramModel';
 
 const DOMAIN = 0x0000;
 const TAG = 'XupinIME';
 const DICT_RAWFILE_PATH = 'dict/words.dict.tsv';
+const BIGRAM_RAWFILE_PATH = 'bigram/bigrams.dict.tsv';
 
 let panel: inputMethodEngine.Panel | undefined = undefined;
 
@@ -20,6 +23,7 @@ export default class InputMethodService extends InputMethodExtensionAbility {
     this.registerListeners();
     this.createPanel();
     this.loadDictionary();
+    this.loadBigramModel();
   }
 
   onDestroy(): void {
@@ -87,6 +91,25 @@ export default class InputMethodService extends InputMethodExtensionAbility {
     } catch (err) {
       const error = err as BusinessError;
       hilog.error(DOMAIN, TAG, 'loadDictionary failed: %{public}d %{public}s', error.code, error.message);
+    }
+  }
+
+  // Loads the context-aware-ranking bigram model asset. A failure here is non-fatal by design:
+  // the holder stays empty and the panel falls back to static-frequency ranking (see Index.ets),
+  // so the keyboard still works, just without the #6 contextual re-ordering.
+  private loadBigramModel(): void {
+    if (!this.context) {
+      hilog.error(DOMAIN, TAG, 'loadBigramModel: extension context missing');
+      return;
+    }
+    try {
+      const bytes = this.context.resourceManager.getRawFileContentSync(BIGRAM_RAWFILE_PATH);
+      const text = util.TextDecoder.create('utf-8').decodeToString(bytes);
+      bigramModelHolder.setModel(BigramModel.parse(text));
+      hilog.info(DOMAIN, TAG, 'bigram model loaded');
+    } catch (err) {
+      const error = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'loadBigramModel failed: %{public}d %{public}s', error.code, error.message);
     }
   }
 }

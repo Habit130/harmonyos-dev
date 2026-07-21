@@ -56,6 +56,17 @@ export class CompositionState {
     return text;
   }
 
+  /**
+   * The words and literals committed so far this session, oldest first — the natural source of
+   * "already on-screen context" for context-aware ranking (issue #6), without tracking a second
+   * copy of the upstream text. Returns a copy so callers can't mutate internal state. Delimiters
+   * (committed spaces/punctuation) are included as-is; interpreting them is the scorer's job (a
+   * word-based scorer simply finds no bigram entry keyed on a delimiter).
+   */
+  committedHistory(): string[] {
+    return this.history.slice();
+  }
+
   backspace(): BackspaceResult {
     if (this.isComposing()) {
       this.buffer.pop();

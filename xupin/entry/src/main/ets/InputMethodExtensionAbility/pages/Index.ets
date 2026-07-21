@@ -1,8 +1,10 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { inputClientHolder } from '../model/InputClientHolder';
 import { dictionaryHolder } from '../model/DictionaryHolder';
+import { bigramModelHolder } from '../model/BigramModelHolder';
 import { CompositionState } from '../model/CompositionState';
 import { generateCandidates } from '../../pinyin/CandidateGenerator';
+import { BigramScorer, CandidateScorer, ScoringContext, StaticWeightScorer } from '../../pinyin/CandidateScorer';
 import { CandidateEntry } from '../../pinyin/types';
 
 const DOMAIN = 0x0000;
@@ -130,7 +132,13 @@ struct Index {
       this.candidates = [];
       return;
     }
-    this.candidates = generateCandidates(this.compositionText, dictionary);
+    // Context-aware ranking (#6): score the pinyin-matched candidate set against the words already
+    // committed this session. When the bigram model asset didn't load, fall back to the #5
+    // static-frequency ranking so the keyboard degrades gracefully rather than breaking.
+    const model = bigramModelHolder.getModel();
+    const scorer: CandidateScorer = model ? new BigramScorer(model) : new StaticWeightScorer();
+    const context: ScoringContext = { precedingWords: this.composition.committedHistory() };
+    this.candidates = generateCandidates(this.compositionText, dictionary, scorer, context);
   }
 
   @Builder
