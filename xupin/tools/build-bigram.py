@@ -90,9 +90,16 @@ def main():
 
     counts = defaultdict(lambda: defaultdict(int))
     for i, sentence in enumerate(sentences):
-        tokens = [t for t in jieba.cut(sentence) if is_cjk_word(t) and t in vocab]
+        # Iterate over ORIGINAL adjacent token pairs and qualify each pair in place. Filtering the
+        # token stream *before* pairing would delete a punctuation / digit / Latin / out-of-vocab
+        # token sitting between two words and fuse those words into a bigram that never occurred
+        # ("A , B" -> counts A->B). Requiring both members of an adjacent pair to qualify instead
+        # lets any non-qualifying token break adjacency — which also matches inference, where a
+        # committed delimiter resets the bigram context (see BigramScorer).
+        tokens = list(jieba.cut(sentence))
         for a, b in zip(tokens, tokens[1:]):
-            counts[a][b] += 1
+            if is_cjk_word(a) and a in vocab and is_cjk_word(b) and b in vocab:
+                counts[a][b] += 1
         if (i + 1) % 20000 == 0:
             print(f"  segmented {i + 1}/{len(sentences)} sentences", file=sys.stderr)
 

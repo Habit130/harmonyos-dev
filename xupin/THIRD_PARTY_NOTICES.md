@@ -70,7 +70,7 @@ as whole-word candidates; users can still type them character-by-character via t
   (`prevWord\tword\tcount` per line, grouped by prevWord, count-descending within a group; mirrors
   words.dict.tsv so `BigramModel.parse` does no runtime sorting). It is the statistical basis for
   context-aware ranking (issue #6): given the last committed word, which candidate more likely
-  follows. 26,982 entries / ~384 KB at the current prune settings.
+  follows. 22,027 entries / ~328 KB at the current prune settings.
 
 To regenerate: run `pip install jieba && python3 tools/build-bigram.py` from `xupin/`. The script
 downloads the pinned corpus file above, so no manual source placement is needed (unlike
@@ -84,11 +84,14 @@ shipped in the app and imposes no obligation on the distributed binary; noted he
 
 ### Why the model is pruned this way
 
-Word bigrams are counted only between tokens that are **both in the static dictionary's vocabulary**
-(so every modelled word is one the IME can actually surface as a candidate) and are **pure CJK**
-(drops digit/latin/punctuation tokens). Pairs seen fewer than `MIN_COUNT` (5) times are dropped as
+Word bigrams are counted only between two **immediately adjacent** tokens that are each **in the
+static dictionary's vocabulary** (so every modelled word is one the IME can actually surface as a
+candidate) and **pure CJK**. A non-qualifying token in between (punctuation, digit, Latin, or an
+out-of-vocab word) breaks adjacency rather than being deleted — so no bigram is ever counted across
+such a boundary, matching inference, where a committed delimiter resets the bigram context. Pairs
+seen fewer than `MIN_COUNT` (5) times are dropped as
 noise, and at most `TOP_K` (40) successors are kept per preceding word. This is the size lever: it
-holds the shipped asset to ~384 KB / a few MB of heap — negligible next to the ~58 MB static
+holds the shipped asset to ~328 KB / a few MB of heap — negligible next to the ~58 MB static
 dictionary — while keeping the frequent, demonstrable transitions (e.g. 经济→发展, 疫情→防控).
 Consequence: rare or long-tail contextual pairs contribute no signal and those candidates fall back
 to static-frequency ranking (which is also the exact behavior on empty/unknown context by design).
