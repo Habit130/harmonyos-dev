@@ -2,16 +2,30 @@ import { describe, it, expect } from '@ohos/hypium';
 import { Dictionary } from '../../main/ets/pinyin/Dictionary';
 import { generateCandidates } from '../../main/ets/pinyin/CandidateGenerator';
 
+// Key-sorted ascending (see Dictionary's class doc) — generateCandidates() now always
+// consults prefixLookup() too, which relies on that order, so an unsorted fixture would
+// silently corrupt every test below it, not just the ones that exercise prefixLookup
+// directly.
 const FIXTURE = [
   'bei\t北\t900',
   'bei\t杯\t800',
-  'jing\t京\t700',
   'beijing\t北京\t1000',
   'beijing\t背景\t500',
+  'jing\t京\t700',
+  'shi\t是\t400',
   'xian\t先\t600',
   'xian\t西安\t550',
   'xian\t现\t500',
-  'shi\t是\t400',
+].join('\n');
+
+// For the mid-composition prefix-completion repro (issue #15): buffer "xi" is itself a
+// legal, dictionary-known syllable, but "xihan"/"xihao"/"xihuan" all extend past it, and
+// "xih"/"xihu"/"xihua" aren't legal syllable sequences on their own.
+const REPRO_FIXTURE = [
+  'xi\t西\t500',
+  'xihan\t西汉\t300',
+  'xihao\t喜好\t400',
+  'xihuan\t喜欢\t900',
 ].join('\n');
 
 export default function candidateGeneratorTest() {
@@ -51,14 +65,71 @@ export default function candidateGeneratorTest() {
       expect(generateCandidates('gan', dict).length).assertEqual(0);
     });
 
-    it('returns empty for an incomplete syllable', 0, () => {
+    it('surfaces prefix-completion candidates for an incomplete syllable (issue #15)', 0, () => {
+      // "b" isn't a legal syllable on its own (segment() returns []), but "bei"/"beijing"
+      // both extend it, so the bar must not go blank while the user is still mid-syllable.
       const dict = Dictionary.parse(FIXTURE);
-      expect(generateCandidates('b', dict).length).assertEqual(0);
+      const results = generateCandidates('b', dict);
+      expect(results.length).assertEqual(4);
+      expect(results[0].word).assertEqual('北京'); // weight 1000, highest overall
+      expect(results[0].matchedLength).assertEqual(1); // consumes just the typed "b"
+      expect(results[1].word).assertEqual('北');
+      expect(results[2].word).assertEqual('杯');
+      expect(results[3].word).assertEqual('背景');
     });
 
     it('returns empty for an empty buffer', 0, () => {
       const dict = Dictionary.parse(FIXTURE);
       expect(generateCandidates('', dict).length).assertEqual(0);
+    });
+
+    it('keeps every intermediate typing state non-empty and narrows toward the exact match (issue #15 repro: x -> xi -> xih -> xihu -> xihua -> xihuan)', 0, () => {
+      const dict = Dictionary.parse(REPRO_FIXTURE);
+
+      const x = generateCandidates('x', dict);
+      expect(x.length).assertEqual(4); // 西/西汉/喜好/喜欢 all start with "x"
+
+      const xi = generateCandidates('xi', dict);
+      expect(xi.length).assertEqual(4); // "xi" itself is also a dictionary key (西)
+      expect(xi[0].word).assertEqual('喜欢'); // highest weight (900) wins the rank
+
+      const xih = generateCandidates('xih', dict);
+      expect(xih.length).assertEqual(3); // "xi" (西) drops out: not a prefix of "xih"
+      expect(xih[0].word).assertEqual('喜欢');
+
+      const xihu = generateCandidates('xihu', dict);
+      expect(xihu.length).assertEqual(2); // 西汉/喜好 drop out: not prefixes of "xihu"
+      expect(xihu[0].word).assertEqual('喜欢');
+      expect(xihu[0].matchedLength).assertEqual(4); // prefix completion: key "xihuan" is
+      // longer than the 4-char buffer, but matchedLength is still just buffer.length.
+      expect(xihu[1].word).assertEqual('西'); // longest-legal-prefix fallback ("xi"+"hu")
+
+      const xihua = generateCandidates('xihua', dict);
+      expect(xihua.length).assertEqual(2);
+      expect(xihua[0].word).assertEqual('喜欢');
+
+      const xihuan = generateCandidates('xihuan', dict);
+      expect(xihuan.length).assertEqual(1); // exact whole-buffer match only
+      expect(xihuan[0].word).assertEqual('喜欢');
+      expect(xihuan[0].matchedLength).assertEqual(6);
+    });
+
+    it('ranks the full merged candidate set by weight before truncating to the display limit — no early recall cutoff (issue #15)', 0, () => {
+      // 80 candidates share the "zz" prefix; the highest-weight one sorts LAST in key
+      // order. A "truncate the first 50 keys, then score" bug would drop it before it's
+      // ever scored — the correct "score everything, then truncate" pipeline keeps it.
+      const lines: string[] = [];
+      for (let i = 0; i < 79; i++) {
+        const suffix = i < 10 ? '0' + i.toString() : i.toString();
+        lines.push('zz' + suffix + '\tfiller' + suffix + '\t' + i.toString());
+      }
+      lines.push('zz79\twinner\t100000');
+      const dict = Dictionary.parse(lines.join('\n'));
+
+      const results = generateCandidates('zz', dict);
+      expect(results.length).assertEqual(50);
+      expect(results[0].word).assertEqual('winner');
+      expect(results[0].weight).assertEqual(100000);
     });
   });
 }
