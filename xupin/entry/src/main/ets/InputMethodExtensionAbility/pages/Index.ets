@@ -186,13 +186,19 @@ struct Index {
       }
       Scroll() {
         Row({ space: 8 }) {
+          // Key must include matchedLength, not just word: #15's prefix completion makes
+          // the same word reappear at growing matchedLength as the buffer lengthens (e.g.
+          // "哈哈" as buffer goes "ha" -> "hah" -> "haha"). With a word-only key, ForEach
+          // sees an unchanged key and skips rebinding the existing component — its onClick
+          // closure keeps the stale, shorter matchedLength from when the word first
+          // appeared, so confirm() clears too little of the buffer (issue #18).
           ForEach(this.candidates, (candidate: CandidateEntry) => {
             Text(candidate.word)
               .fontSize(18)
               .fontColor(Color.Black)
               .padding({ left: 10, right: 10, top: 4, bottom: 4 })
               .onClick(() => this.onCandidateClick(candidate))
-          }, (candidate: CandidateEntry) => candidate.word)
+          }, (candidate: CandidateEntry) => candidate.word + ' ' + String(candidate.matchedLength))
         }
       }
       .scrollable(ScrollDirection.Horizontal)
