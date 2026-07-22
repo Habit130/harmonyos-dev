@@ -2,30 +2,63 @@ import { Dictionary } from './Dictionary';
 import { segment } from './Segmenter';
 import { CandidateEntry, DictionaryEntry } from './types';
 
+// Display-count cap applied only after the full candidate set is merged and ranked (see
+// generateCandidates) — never as an earlier recall cutoff. Named/injectable rather than a
+// magic number, mirroring BigramScorer.DEFAULT_BIGRAM_COEFFICIENT's style (issue #15).
+export const DEFAULT_DISPLAY_LIMIT: number = 50;
+
+// A candidate paired with its original merge-order position, so ties (equal weight) keep a
+// deterministic order via the index tiebreak instead of depending on Array.sort's stability
+// guarantees across engines.
+interface WeightedCandidate {
+  entry: CandidateEntry;
+  index: number;
+}
+
 /**
- * Ranked candidates for the current pinyin composition buffer.
+ * Ranked candidates for the current pinyin composition buffer, merged from two sources
+ * (issue #15) and then scored/truncated as one pipeline — never a subset scored first:
  *
- * Whole-buffer dictionary matches always win first: looking up the buffer's concatenated
- * pinyin key is invariant to how it's segmented into syllables (e.g. "xian" and "xi"+"an"
- * concatenate to the same key "xian"), so a single lookup already surfaces every reading
- * ambiguity the dictionary knows about, including multi-character whole-word matches like
- * "beijing" -> 北京 outranking a char-by-char reading.
+ * 1. `lookupCandidates()` (unchanged from #5): whole-buffer dictionary matches always win
+ *    first — looking up the buffer's concatenated pinyin key is invariant to how it's
+ *    segmented into syllables (e.g. "xian" and "xi"+"an" concatenate to the same key
+ *    "xian"), so a single lookup already surfaces every reading ambiguity the dictionary
+ *    knows about, including multi-character whole-word matches like "beijing" -> 北京
+ *    outranking a char-by-char reading. When nothing matches the whole buffer, falls back
+ *    to the longest legal-segmentation prefix that does have a match. This is deliberately
+ *    not full multi-word chaining: any confirm only clears the matched portion of the
+ *    composition buffer (see CompositionState.confirm), so a candidate only ever needs to
+ *    represent one pick, not a full-sentence conversion.
+ * 2. `prefixCandidates()`: dictionary keys that have the buffer as a *leading* substring
+ *    (e.g. buffer "xih" matches key "xihuan"), independent of whether the buffer itself
+ *    segments into legal syllables. This is what makes intermediate typing states like "x"
+ *    or "xih" show candidates instead of a blank bar.
  *
- * When nothing matches the whole buffer (e.g. it's longer than any dictionary entry),
- * falls back to the longest legal-segmentation prefix that does have a match. This is
- * deliberately not full multi-word chaining: v1 clears the whole composition buffer on
- * any confirm (see CompositionState), so a candidate only ever needs to represent one
- * pick, not a full-sentence conversion.
+ * The two sets are merged and deduped by (word, matchedLength), then the whole merged set
+ * is ranked and only then truncated to DEFAULT_DISPLAY_LIMIT — scoring never runs on a
+ * pre-truncated subset, so a low-static-weight candidate that a future context-aware
+ * scorer would rank highly is never discarded before it gets scored.
  */
-export function generateCandidates(buffer: string, dictionary: Dictionary): CandidateEntry[] {
+export function generateCandidates(
+  buffer: string,
+  dictionary: Dictionary,
+  displayLimit?: number
+): CandidateEntry[] {
   if (buffer.length === 0) {
     return [];
   }
   const paths = segment(buffer);
-  if (paths.length === 0) {
-    return [];
-  }
+  const looked = lookupCandidates(buffer, dictionary, paths);
+  const prefixed = prefixCandidates(buffer, dictionary);
+  const merged = mergeCandidates(looked, prefixed);
+  return rankAndTruncate(merged, displayLimit ?? DEFAULT_DISPLAY_LIMIT);
+}
 
+// The #5 candidate-set lookup, untouched: whole-buffer hit first, else longest legal prefix
+// hit. Naturally returns [] when `paths` is empty (collectPrefixLengths([]) is [], and an
+// empty `paths` only ever occurs alongside no whole-buffer dictionary key either) — so this
+// needs no explicit paths.length guard of its own.
+function lookupCandidates(buffer: string, dictionary: Dictionary, paths: string[][]): CandidateEntry[] {
   const direct = dictionary.lookup(buffer);
   if (direct.length > 0) {
     return withMatchedLength(direct, buffer.length);
@@ -40,6 +73,51 @@ export function generateCandidates(buffer: string, dictionary: Dictionary): Cand
     }
   }
   return [];
+}
+
+// New candidate source (issue #15): dictionary keys extending the buffer as a prefix.
+// Picking one of these consumes the whole buffer (matchedLength = buffer.length) even
+// though the matched key may be longer — the unfinished trailing letters the user hasn't
+// typed yet aren't required. CompositionState.confirm() already trims by matchedLength, so
+// this needs no change on the consuming side.
+function prefixCandidates(buffer: string, dictionary: Dictionary): CandidateEntry[] {
+  return withMatchedLength(dictionary.prefixLookup(buffer), buffer.length);
+}
+
+// Unions lookupCandidates()'s and prefixCandidates()'s results, deduping by (word,
+// matchedLength) with no source priority (issue #15). The only real overlap case is a
+// whole-buffer dictionary hit: the buffer is trivially a prefix of its own key, so that
+// key's entries surface from both sources with an identical matchedLength.
+function mergeCandidates(a: CandidateEntry[], b: CandidateEntry[]): CandidateEntry[] {
+  const seen = new Set<string>();
+  const merged: CandidateEntry[] = [];
+  const combined = a.concat(b);
+  for (let i = 0; i < combined.length; i++) {
+    const entry = combined[i];
+    const dedupeKey = entry.word + ' ' + String(entry.matchedLength);
+    if (!seen.has(dedupeKey)) {
+      seen.add(dedupeKey);
+      merged.push(entry);
+    }
+  }
+  return merged;
+}
+
+// Scores the merged set by weight (the only scorer this issue has — see file doc) and only
+// then truncates to displayLimit, so truncation can never discard a candidate the scoring
+// step hasn't seen yet.
+function rankAndTruncate(entries: CandidateEntry[], displayLimit: number): CandidateEntry[] {
+  const weighted = entries.map((entry: CandidateEntry, index: number): WeightedCandidate => {
+    return { entry, index };
+  });
+  weighted.sort((a: WeightedCandidate, b: WeightedCandidate): number => {
+    if (b.entry.weight !== a.entry.weight) {
+      return b.entry.weight - a.entry.weight;
+    }
+    return a.index - b.index;
+  });
+  const ranked = weighted.map((w: WeightedCandidate): CandidateEntry => w.entry);
+  return ranked.length > displayLimit ? ranked.slice(0, displayLimit) : ranked;
 }
 
 // Tags each dictionary hit with how many leading buffer characters it actually covers, so

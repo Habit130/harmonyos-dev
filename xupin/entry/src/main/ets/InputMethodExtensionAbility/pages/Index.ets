@@ -198,6 +198,11 @@ struct Index {
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .layoutWeight(1)
+      // Scroll's own content-alignment default is Alignment.Center (see ArkUI's universal
+      // `align` attribute): with few candidates the inner Row is narrower than this
+      // layoutWeight(1) box, so it was centering in the middle of the bar instead of
+      // hugging the left edge next to the pinyin buffer text (issue #15).
+      .align(Alignment.Start)
     }
     .width('100%')
     .height(36)
