@@ -1,20 +1,27 @@
 import { mindSporeLite } from '@kit.MindSporeLiteKit';
-import { NeuralModel } from '../../pinyin/NeuralScorer';
+import { BatchRow, FlatBatchLogits, NeuralModel, RowLogits } from '../../pinyin/NeuralScorer';
 
 /**
- * Wraps a loaded MindSpore Lite Kit model as a NeuralModel (pinyin/NeuralScorer.ets's
- * inference abstraction). **Compile-only verified, not unit-tested or device-tested** — real
- * on-device inference can't be exercised off-device (issue #20 phase 3; NeuralScorer.test.ets
- * unit-tests the scoring math this feeds, against a fake NeuralModel instead of this class).
+ * Wraps a loaded MindSpore Lite Kit model as a NeuralModel (pinyin/NeuralScorer.ets's batch
+ * inference abstraction). **Compile-only verified, not unit-tested** — real on-device inference
+ * can't be exercised off-device (issue #20 phase 3; NeuralScorer.test.ets unit-tests the scoring
+ * math this feeds, against a fake NeuralModel instead of this class).
  *
- * Model I/O contract assumed here (xupin/docs/spike-20-neural-ranking.md §3's confirmed
- * no-cache export shape — the KV-cache graph is not used, per that report's §4/§5a): three
- * inputs named `input_ids`, `attention_mask`, `position_ids` (each `[1, sequenceLength]`), one
- * `logits` output (`[1, sequenceLength, vocabSize]`). The spike confirmed conversion and
- * execution succeed despite MindSpore Lite Kit's own docs claiming no op supports int64 input
- * (see that report's §5/§5a) but did not specifically inspect whether the *converted* `.ms`
- * file's input tensors end up declared int32 or int64 — this reads each input's actual
- * `dtype` at runtime and encodes accordingly rather than assuming one or the other.
+ * Model I/O contract (xupin/docs/issue-22-shape-fix.md §2's reconfirmed no-cache export shape —
+ * the KV-cache graph is not used, per that report and spike-20-neural-ranking.md §4/§5a): three
+ * inputs named `input_ids`, `attention_mask`, `position_ids` (each `[batchSize, sequenceLength]`,
+ * baked to a FIXED shape at conversion time — issue #22 D1, xupin/docs/issue-22-shape-fix.md §3),
+ * one `logits` output (`[batchSize, sequenceLength, vocabSize]`). `batchSize`/`sequenceLength`
+ * are derived from the `rows` this is called with (see predict()) rather than imported as
+ * separate constants — they must equal whatever NeuralScorer.ets's caller built the rows with,
+ * which itself must equal the converted .ms file's baked shape (xupin/docs/issue-22-shape-fix.md
+ * §5); a mismatch surfaces naturally as a MindSpore Lite Kit tensor-size error from setData(),
+ * same as the bug #22 exists to fix.
+ *
+ * Issue #22 D2/D9: one `predict()` call handles the whole batch (was one call per candidate
+ * pre-#22), and reads `logits` directly off the returned `Float32Array` via a thin per-row
+ * accessor (RowLogits) instead of materializing a `number[][][]` — at `[9, 20, 21128]` that
+ * would be ~15.2MB of nested-array allocation and element-by-element copying per keystroke.
  */
 export class MindSporeNeuralModel implements NeuralModel {
   private readonly model: mindSporeLite.Model;
@@ -23,47 +30,71 @@ export class MindSporeNeuralModel implements NeuralModel {
     this.model = model;
   }
 
-  async predict(tokenIds: number[]): Promise<number[][]> {
-    const sequenceLength = tokenIds.length;
+  async predict(rows: BatchRow[]): Promise<RowLogits[]> {
+    const batchSize = rows.length;
+    const sequenceLength = batchSize > 0 ? rows[0].tokenIds.length : 0;
+
     const inputs = this.model.getInputs();
     for (let i = 0; i < inputs.length; i++) {
       const tensor = inputs[i];
-      tensor.setData(encodeInts(valuesFor(tensor.name, tokenIds, sequenceLength), tensor.dtype));
+      tensor.setData(encodeInts(valuesFor(tensor.name, rows, sequenceLength), tensor.dtype));
     }
 
     const outputs = await this.model.predict(inputs);
     // Single `logits` output per the no-cache export shape (see this file's doc) — the
     // KV-cache graph's extra present.N.{key,value} outputs don't apply here.
     const logitsTensor = outputs[0];
-    const vocabSize = logitsTensor.shape[logitsTensor.shape.length - 1];
+    const shape = logitsTensor.shape;
+    const vocabSize = shape[shape.length - 1];
     const flat = new Float32Array(logitsTensor.getData());
-    const logits: number[][] = [];
-    for (let position = 0; position < sequenceLength; position++) {
-      const row: number[] = [];
-      const base = position * vocabSize;
-      for (let v = 0; v < vocabSize; v++) {
-        row.push(flat[base + v]);
-      }
-      logits.push(row);
+    const expectedLength = batchSize * sequenceLength * vocabSize;
+    if (flat.length !== expectedLength) {
+      throw new Error('MindSporeNeuralModel: logits tensor "' + logitsTensor.name + '" dataSize ' +
+        flat.length + ' does not match batch=' + batchSize + ' x seq=' + sequenceLength +
+        ' x vocab=' + vocabSize + ' (=' + expectedLength + ') for shape [' + shape.join(',') + ']');
     }
-    return logits;
+
+    const batch = new FlatBatchLogits(flat, sequenceLength, vocabSize);
+    const rowViews: RowLogits[] = [];
+    for (let r = 0; r < batchSize; r++) {
+      rowViews.push(batch.rowAt(r));
+    }
+    return rowViews;
   }
 }
 
-function valuesFor(inputName: string, tokenIds: number[], sequenceLength: number): number[] {
+function valuesFor(inputName: string, rows: BatchRow[], sequenceLength: number): number[] {
   if (inputName === 'input_ids') {
-    return tokenIds;
+    const values: number[] = [];
+    for (let r = 0; r < rows.length; r++) {
+      const tokenIds = rows[r].tokenIds;
+      for (let i = 0; i < tokenIds.length; i++) {
+        values.push(tokenIds[i]);
+      }
+    }
+    return values;
   }
   if (inputName === 'attention_mask') {
-    // Every call sends an exact-length sequence, no padding — an all-ones mask.
-    return new Array<number>(sequenceLength).fill(1);
+    const values: number[] = [];
+    for (let r = 0; r < rows.length; r++) {
+      const attentionMask = rows[r].attentionMask;
+      for (let i = 0; i < attentionMask.length; i++) {
+        values.push(attentionMask[i]);
+      }
+    }
+    return values;
   }
   if (inputName === 'position_ids') {
-    const ids: number[] = [];
-    for (let i = 0; i < sequenceLength; i++) {
-      ids.push(i);
+    // Always 0..sequenceLength-1 for every row, never told explicitly — real tokens are always
+    // front-loaded by buildBatchRow()'s right-padding (see BatchRow's doc), so the physical
+    // array index already is each real token's true position.
+    const values: number[] = [];
+    for (let r = 0; r < rows.length; r++) {
+      for (let i = 0; i < sequenceLength; i++) {
+        values.push(i);
+      }
     }
-    return ids;
+    return values;
   }
   throw new Error('MindSporeNeuralModel: unexpected model input "' + inputName + '"');
 }

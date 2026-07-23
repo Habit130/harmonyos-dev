@@ -118,8 +118,11 @@ export default function candidateGeneratorTest() {
 
     it('ranks the full merged candidate set by weight before truncating to the display limit — no early recall cutoff (issue #15)', 0, () => {
       // 80 candidates share the "zz" prefix; the highest-weight one sorts LAST in key
-      // order. A "truncate the first 50 keys, then score" bug would drop it before it's
+      // order. A "truncate the first N keys, then score" bug would drop it before it's
       // ever scored — the correct "score everything, then truncate" pipeline keeps it.
+      // Display limit is 9 (issue #22 D3: == the neural model's batch size), not #15's
+      // original 50 — this test only cares that truncation happens after scoring, not the
+      // exact cap value, so it still uses a candidate pool much larger than the cap.
       const lines: string[] = [];
       for (let i = 0; i < 79; i++) {
         const suffix = i < 10 ? '0' + i.toString() : i.toString();
@@ -129,7 +132,7 @@ export default function candidateGeneratorTest() {
       const dict = Dictionary.parse(lines.join('\n'));
 
       const results = generateCandidates('zz', dict);
-      expect(results.length).assertEqual(50);
+      expect(results.length).assertEqual(9);
       expect(results[0].word).assertEqual('winner');
       expect(results[0].weight).assertEqual(100000);
     });

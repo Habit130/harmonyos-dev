@@ -10,3 +10,8 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+
+# #20 neural checkpoint assets: derived binaries from a license-disputed HF checkpoint
+# (see docs/spike-20-neural-ranking.md "License status") — local device-testing only,
+# must not be committed until that's resolved.
+/entry/src/main/resources/rawfile/model/

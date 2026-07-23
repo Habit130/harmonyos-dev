@@ -17,35 +17,52 @@
 export class Tokenizer {
   private readonly charToId: Map<string, number>;
   private readonly unknownId: number;
+  private readonly startId: number;
+  private readonly paddingId: number;
 
-  private constructor(charToId: Map<string, number>, unknownId: number) {
+  private constructor(charToId: Map<string, number>, unknownId: number, startId: number, paddingId: number) {
     this.charToId = charToId;
     this.unknownId = unknownId;
+    this.startId = startId;
+    this.paddingId = paddingId;
   }
 
   /**
    * Parses a `vocab.txt`-style file: one token per line, line index is the token id. Keeps
    * only single non-ASCII characters (the plain, non-`##`-prefixed CJK entries — `##`-prefixed
-   * duplicates of the same characters are skipped, per the file doc above) plus `[UNK]`'s id
-   * for encode()'s out-of-vocabulary fallback. Multi-character/ASCII/digit entries (WordPiece
-   * subword fragments for non-Chinese text) are dropped — this project only ever tokenizes
-   * Chinese candidate words and context (see CONTEXT.md's 候选词 definition).
+   * duplicates of the same characters are skipped, per the file doc above) plus `[UNK]`/`[CLS]`/
+   * `[PAD]`'s ids. `[UNK]` is encode()'s out-of-vocabulary fallback; `[CLS]`/`[PAD]` are for
+   * NeuralScorer's batch row construction (issue #22 D5's empty-context start anchor, and
+   * padding rows/positions out to the model's fixed sequence length — see that file). Other
+   * multi-character/ASCII/digit entries (WordPiece subword fragments for non-Chinese text) are
+   * dropped — this project only ever tokenizes Chinese candidate words and context (see
+   * CONTEXT.md's 候选词 definition).
    */
   static parse(vocabText: string): Tokenizer {
     const lines = vocabText.split('\n');
     const charToId = new Map<string, number>();
     let unknownId = -1;
+    let startId = -1;
+    let paddingId = -1;
     for (let i = 0; i < lines.length; i++) {
       const token = stripTrailingCr(lines[i]);
       if (token === '[UNK]') {
         unknownId = i;
         continue;
       }
+      if (token === '[CLS]') {
+        startId = i;
+        continue;
+      }
+      if (token === '[PAD]') {
+        paddingId = i;
+        continue;
+      }
       if (token.length === 1 && token.charCodeAt(0) > 127) {
         charToId.set(token, i);
       }
     }
-    return new Tokenizer(charToId, unknownId);
+    return new Tokenizer(charToId, unknownId, startId, paddingId);
   }
 
   /** Maps each character to its vocab id, in order; unmapped characters become [UNK]. */
@@ -56,6 +73,21 @@ export class Tokenizer {
       ids.push(this.charToId.get(chars[i]) ?? this.unknownId);
     }
     return ids;
+  }
+
+  /**
+   * `[CLS]`'s vocab id — used as the single-token start-of-sequence anchor when there's no
+   * committed context yet (issue #22 D5). Confirmed a genuine trained start anchor for
+   * `uer/gpt2-chinese-cluecorpussmall`, not assumed — see
+   * `xupin/docs/issue-22-shape-fix.md` §1 for the empirical check.
+   */
+  clsId(): number {
+    return this.startId;
+  }
+
+  /** `[PAD]`'s vocab id — used to right-pad batch rows out to the model's fixed sequence length. */
+  padId(): number {
+    return this.paddingId;
   }
 }
 

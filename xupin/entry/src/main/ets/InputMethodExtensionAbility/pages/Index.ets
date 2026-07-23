@@ -6,7 +6,7 @@ import { neuralModelHolder } from '../model/NeuralModelHolder';
 import { CompositionState } from '../model/CompositionState';
 import { generateCandidates } from '../../pinyin/CandidateGenerator';
 import { CandidateEntry } from '../../pinyin/types';
-import { NeuralScorer, rerankWithNeuralScorer } from '../../pinyin/NeuralScorer';
+import { NeuralScorer, RankedCandidates, rankCandidates } from '../../pinyin/NeuralScorer';
 import { ScoringContext } from '../../pinyin/CandidateScorer';
 
 const DOMAIN = 0x0000;
@@ -40,6 +40,10 @@ struct Index {
   @State mode: PanelMode = PanelMode.LETTERS;
   @State compositionText: string = '';
   @State candidates: CandidateEntry[] = [];
+  // Issue #22 D7/D8: whether the neural model actually participated in producing the CURRENT
+  // this.candidates order — the only user-visible signal for "did context-aware ranking run
+  // this round", via the first candidate's style (see candidateBar()/firstCandidateStyle()).
+  @State neuralRanked: boolean = false;
 
   // Bumped by InputMethodService on every inputStart (new InputClient bound). Business
   // logic outside this component can't touch @State directly, so it signals through
@@ -55,6 +59,7 @@ struct Index {
     this.composition = new CompositionState();
     this.compositionText = '';
     this.candidates = [];
+    this.neuralRanked = false;
   }
 
   // Candidates are shown in a panel-only composition bar, not as inline preview text in
@@ -127,9 +132,9 @@ struct Index {
     return { word: raw, weight: 0, matchedLength: raw.length };
   }
 
-  // Async since issue #20: when the neural assets are loaded, this awaits a batch of model
-  // forward passes (rerankWithNeuralScorer, see pinyin/NeuralScorer.ets) after the
-  // synchronous static-only ranking below is already showing. **Compile-only verified** — see
+  // Async since issue #20; issue #22 D6 changed this to exactly one UI assignment per keystroke
+  // (was two: an immediate static-only assignment, then an overwrite once the neural rerank
+  // resolved). **Compile-only verified** — see xupin/docs/issue-22-shape-fix.md and
   // xupin/docs/spike-20-neural-ranking.md for why the neural path itself can't be exercised
   // off-device; the static-only path (dictionary present, neural assets absent) is the same
   // code that was already real-device-verified pre-#20.
@@ -139,29 +144,60 @@ struct Index {
     const dictionary = dictionaryHolder.getDictionary();
     if (!dictionary || buffer.length === 0) {
       this.candidates = [];
+      this.neuralRanked = false;
       return;
     }
-    const staticRanked = generateCandidates(buffer, dictionary);
-    this.candidates = staticRanked;
+
+    // Issue #22 D8: turn the "neural participated" style off the instant this keystroke starts
+    // being processed. `this.candidates` is deliberately left untouched here (still the
+    // previous keystroke's list) until the single assignment below, so the bar never flashes
+    // empty or shows an intermediate static-only reorder while a batched forward pass is in
+    // flight — the same flag doubles as "still computing" and "this round has no neural score"
+    // (D8: "同一个样式通道同时表达「正在算」和「没生效」"); both render identically, see
+    // candidateBar()/firstCandidateStyle().
+    this.neuralRanked = false;
 
     const model = neuralModelHolder.getModel();
     const tokenizer = tokenizerHolder.getTokenizer();
-    if (!model || !tokenizer) {
-      // Neural assets not loaded (not yet bundled pending the license decision — see
-      // InputMethodService.loadNeuralModel()/loadTokenizer() — or failed to load). Stays on
-      // the static-only ranking already assigned above; this is the sanctioned degrade path.
-      return;
+    const scorer = model && tokenizer ? new NeuralScorer(model, tokenizer) : undefined;
+    if (!scorer) {
+      // Issue #22 D7: no longer a silent degrade — pre-#22 this branch returned with zero log
+      // trace ("the sanctioned degrade path"). Every keystroke while assets are missing now
+      // logs at error level, distinguishable from an inference failure below by message text.
+      hilog.error(DOMAIN, TAG,
+        'refreshCandidates: neural assets missing (model loaded=%{public}s, tokenizer loaded=%{public}s), staying on static ranking',
+        String(model !== undefined), String(tokenizer !== undefined));
     }
-    const scorer = new NeuralScorer(model, tokenizer);
     const context: ScoringContext = { precedingWords: this.composition.committedHistory() };
-    const reranked = await rerankWithNeuralScorer(staticRanked, context, scorer);
-    // The user may have kept typing while the reranking above was in flight — if the
+
+    let result: RankedCandidates;
+    try {
+      result = await rankCandidates(buffer, dictionary, context, scorer);
+    } catch (err) {
+      // Sole catch in the whole neural-ranking call chain (MindSporeNeuralModel.predict ->
+      // NeuralScorer.prepare -> rankCandidates all propagate, none catch). Distinguishes a real
+      // inference failure from the assets-missing branch above by message text;
+      // MindSporeNeuralModel embeds the failing tensor's name/shape/dataSize in its thrown
+      // messages where relevant (issue #22 acceptance criteria: both categories must be
+      // separately diagnosable from the log alone).
+      const message = err instanceof Error ? err.message : String(err);
+      hilog.error(DOMAIN, TAG, 'refreshCandidates: neural inference failed, staying on static ranking: %{public}s',
+        message);
+      if (this.composition.compositionText !== buffer) {
+        return;
+      }
+      this.candidates = generateCandidates(buffer, dictionary);
+      return; // this.neuralRanked is already false, set at the top of this call
+    }
+
+    // The user may have kept typing while the batched forward pass above was in flight — if the
     // composition buffer has since moved on, this result is for a buffer that's no longer
     // current, so drop it rather than clobber whatever refreshCandidates() call came after.
     if (this.composition.compositionText !== buffer) {
       return;
     }
-    this.candidates = reranked;
+    this.candidates = result.candidates;
+    this.neuralRanked = result.neuralRanked;
   }
 
   @Builder
@@ -206,6 +242,18 @@ struct Index {
     .width('100%')
   }
 
+  // Issue #22 D7: the single seam for "does the first candidate look neurally-ranked" — a
+  // minimal placeholder (bold + an accent color) standing in for the animated colorful-font
+  // module that's out of this issue's scope. That later module only needs to replace this
+  // method's body; candidateBar() below doesn't need to change again.
+  private firstCandidateFontColor(): ResourceColor {
+    return this.neuralRanked ? Color.Blue : Color.Black;
+  }
+
+  private firstCandidateFontWeight(): FontWeight {
+    return this.neuralRanked ? FontWeight.Bold : FontWeight.Normal;
+  }
+
   @Builder
   candidateBar() {
     Row({ space: 4 }) {
@@ -223,10 +271,11 @@ struct Index {
           // sees an unchanged key and skips rebinding the existing component — its onClick
           // closure keeps the stale, shorter matchedLength from when the word first
           // appeared, so confirm() clears too little of the buffer (issue #18).
-          ForEach(this.candidates, (candidate: CandidateEntry) => {
+          ForEach(this.candidates, (candidate: CandidateEntry, index: number) => {
             Text(candidate.word)
               .fontSize(18)
-              .fontColor(Color.Black)
+              .fontColor(index === 0 ? this.firstCandidateFontColor() : Color.Black)
+              .fontWeight(index === 0 ? this.firstCandidateFontWeight() : FontWeight.Normal)
               .padding({ left: 10, right: 10, top: 4, bottom: 4 })
               .onClick(() => this.onCandidateClick(candidate))
           }, (candidate: CandidateEntry) => candidate.word + ' ' + String(candidate.matchedLength))

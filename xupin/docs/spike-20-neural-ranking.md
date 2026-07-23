@@ -326,6 +326,14 @@ already-produced, already-quantized `.ms` files. See §7 for exact steps and wha
 
 ## 7. Handoff: what the human needs to run
 
+> **Superseded by issue #22 — read `xupin/docs/issue-22-shape-fix.md` instead of this section.**
+> Every `.ms` file named below has a **dynamic** sequence axis (converted without
+> `--inputShape`), which is exactly the bug issue #22 exists to fix: ArkTS cannot resize it, so
+> `predict()` never produces real output on-device with these files. Do not bundle any `.ms` from
+> this section for device testing — use `issue-22-shape-fix.md` §4's `static_9_20_quant.ms`
+> (batch+seq baked to a fixed `[9,20]` shape at conversion time) instead. The rest of this
+> section is kept as a historical record of the phase-1 spike, not current guidance.
+
 ### What already exists (no re-conversion needed)
 
 Five `.ms` files, already converted and quantized by this spike, sitting at

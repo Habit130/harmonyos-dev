@@ -6,14 +6,26 @@ import { CandidateScorer, ScoringContext, StaticWeightScorer } from './Candidate
 // rankAndTruncate() scores every candidate against this context regardless of which scorer is
 // injected. StaticWeightScorer (the default) ignores context entirely, so an empty one is a
 // harmless placeholder for it. A context-aware rerank (NeuralScorer) doesn't go through this
-// function at all — see pinyin/NeuralScorer.ets's rerankWithNeuralScorer(), which re-scores an
-// already-generated, already-truncated result with the real committed context (issue #20).
+// function at all — see pinyin/NeuralScorer.ets's rankCandidates(), which re-scores this
+// function's own (StaticWeightScorer-ranked) result with the real committed context (issue #20,
+// reworked into a single async facade by issue #22 D6).
 const NO_CONTEXT: ScoringContext = { precedingWords: [] };
 
 // Display-count cap applied only after the full candidate set is merged and ranked (see
 // generateCandidates) — never as an earlier recall cutoff. Named/injectable rather than a
 // magic number, mirroring BigramScorer.DEFAULT_BIGRAM_COEFFICIENT's style (issue #15).
-export const DEFAULT_DISPLAY_LIMIT: number = 50;
+//
+// 9, not the pre-#22 value of 50: issue #22 D3 ties this to the neural model's batch size —
+// ArkTS's MindSpore Lite binding only supports a fixed shape baked in at conversion time (no
+// runtime resize, see xupin/docs/spike-20-neural-ranking.md §4), so the number of candidates
+// that get a neural score in one forward pass is fixed by the converted .ms file, not by a
+// runtime parameter. Making the display limit and the batch size the same number means every
+// candidate the user can actually see was scored by the same pass — no mixing a neurally-scored
+// head with a static-only tail. NeuralScorer.ets's DEFAULT_BATCH_SIZE re-exports this constant
+// rather than redeclaring it, so the two can't drift apart. Changing this value requires
+// re-running the model conversion (xupin/docs/issue-22-shape-fix.md §5) — it is not a
+// recompile-only change.
+export const DEFAULT_DISPLAY_LIMIT: number = 9;
 
 // A candidate paired with its original merge-order position, so ties (equal weight) keep a
 // deterministic order via the index tiebreak instead of depending on Array.sort's stability

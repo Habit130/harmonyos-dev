@@ -53,5 +53,11 @@ export default function tokenizerTest() {
       const tokenizer = Tokenizer.parse(FIXTURE_VOCAB);
       expect(tokenizer.encode('').length).assertEqual(0);
     });
+
+    it('exposes [CLS] and [PAD]\'s vocab ids (issue #22 D5/D9 batch-row construction)', 0, () => {
+      const tokenizer = Tokenizer.parse(FIXTURE_VOCAB);
+      expect(tokenizer.clsId()).assertEqual(2);
+      expect(tokenizer.padId()).assertEqual(0);
+    });
   });
 }
