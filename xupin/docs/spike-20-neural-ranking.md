@@ -357,14 +357,32 @@ actually confirmed yet. None of those are reasons to put them in version control
 proceeds on this checkpoint, the license question needs to resolve first regardless of these
 specific files.
 
+### Update: phase 2/3 landed since this section was written
+
+The real IME (not a throwaway page) now has the loading/scoring wiring built and unit-tested
+(`Tokenizer.ets`, `NeuralScorer.ets`, `MindSporeNeuralModel.ets`,
+`InputMethodService.loadTokenizer()`/`loadNeuralModel()`) — `syscap.json` already exists too. It
+loads exactly two rawfiles, both currently absent on purpose (license still unresolved, §"License
+status" below): `entry/src/main/resources/rawfile/model/vocab.txt` (the checkpoint's tokenizer
+vocab — itself checkpoint-derived, same deferred-license bucket as the `.ms` file, not just the
+weights) and `entry/src/main/resources/rawfile/model/neural_scorer.ms`. Both loads fail gracefully
+and leave neural ranking degraded to static-only until both files are present — see
+`InputMethodService.ets`'s comment on those constants. This means step 2 below should drop
+`nocache_quant.ms` at that path **renamed to `neural_scorer.ms`** (plus `vocab.txt` alongside it)
+rather than building a separate scratch page — the throwaway-page approach in step 3 is still a
+valid *first* smoke test (isolates model-loading/latency from the rest of the IME), but the real
+device go/no-go should ultimately exercise the actual IME panel, not just a scratch page.
+
 ### Steps (human, real device — ADR-0002; agent does not touch the device)
 
-1. In DevEco Studio, open `xupin/`. Add a `syscap.json` under `entry/src/main/` declaring
-   `SystemCapability.AI.MindSporeLite` (see the ArkTS MindSpore Lite guide,
-   `docs/harmonyos-guides/AI/MindSpore Lite Kit（昇思推理框架服务）/使用MindSpore Lite实现图像分类（ArkTS）.md`,
-   for the exact JSON — the default device capability set doesn't include it).
-2. Copy `nocache_quant.ms` into `entry/src/main/resources/rawfile/model/` (mirrors
-   `dict/words.dict.tsv`'s existing placement convention).
+1. In DevEco Studio, open `xupin/`. `syscap.json` already exists under `entry/src/main/`
+   declaring `SystemCapability.AI.MindSporeLite` — no need to add it.
+2. Copy `nocache_quant.ms` into `entry/src/main/resources/rawfile/model/neural_scorer.ms`
+   (renamed — must match `InputMethodService.NEURAL_MODEL_RAWFILE_PATH`) and a `vocab.txt` (the
+   checkpoint's tokenizer vocab, e.g. from the same HF repo used for the ONNX export) alongside it
+   at `entry/src/main/resources/rawfile/model/vocab.txt` (must match
+   `NEURAL_VOCAB_RAWFILE_PATH`). This mirrors `dict/words.dict.tsv`'s existing placement
+   convention.
 3. Build/run a throwaway test page (not part of the real IME UI — a temporary button on the
    host app's own `pages/Index.ets`, or a fresh scratch page) that:
    - Loads the model via `resourceManager.getRawFileContentSync` + `mindSporeLite.loadModelFromBuffer`

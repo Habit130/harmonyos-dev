@@ -39,6 +39,18 @@ export class CompositionState {
     return this.buffer.length > 0;
   }
 
+  /**
+   * The words/literals confirmed so far this session, oldest first — issue #20's
+   * `ScoringContext.precedingWords` data source. Returns a copy (not the live `history`
+   * array) so callers can't mutate composition state through it. Includes literal
+   * space/punctuation confirms same as `history` itself does; a context-aware scorer that
+   * only cares about words simply won't find those in its vocabulary and scores them as
+   * unknown context, no filtering needed here (see pinyin/CandidateScorer.ets).
+   */
+  committedHistory(): string[] {
+    return this.history.slice();
+  }
+
   typeLetter(letter: string): void {
     this.buffer.push(letter);
   }

@@ -1,9 +1,13 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { inputClientHolder } from '../model/InputClientHolder';
 import { dictionaryHolder } from '../model/DictionaryHolder';
+import { tokenizerHolder } from '../model/TokenizerHolder';
+import { neuralModelHolder } from '../model/NeuralModelHolder';
 import { CompositionState } from '../model/CompositionState';
 import { generateCandidates } from '../../pinyin/CandidateGenerator';
 import { CandidateEntry } from '../../pinyin/types';
+import { NeuralScorer, rerankWithNeuralScorer } from '../../pinyin/NeuralScorer';
+import { ScoringContext } from '../../pinyin/CandidateScorer';
 
 const DOMAIN = 0x0000;
 const TAG = 'XupinIME';
@@ -123,14 +127,41 @@ struct Index {
     return { word: raw, weight: 0, matchedLength: raw.length };
   }
 
-  private refreshCandidates(): void {
-    this.compositionText = this.composition.compositionText;
+  // Async since issue #20: when the neural assets are loaded, this awaits a batch of model
+  // forward passes (rerankWithNeuralScorer, see pinyin/NeuralScorer.ets) after the
+  // synchronous static-only ranking below is already showing. **Compile-only verified** — see
+  // xupin/docs/spike-20-neural-ranking.md for why the neural path itself can't be exercised
+  // off-device; the static-only path (dictionary present, neural assets absent) is the same
+  // code that was already real-device-verified pre-#20.
+  private async refreshCandidates(): Promise<void> {
+    const buffer = this.composition.compositionText;
+    this.compositionText = buffer;
     const dictionary = dictionaryHolder.getDictionary();
-    if (!dictionary || this.compositionText.length === 0) {
+    if (!dictionary || buffer.length === 0) {
       this.candidates = [];
       return;
     }
-    this.candidates = generateCandidates(this.compositionText, dictionary);
+    const staticRanked = generateCandidates(buffer, dictionary);
+    this.candidates = staticRanked;
+
+    const model = neuralModelHolder.getModel();
+    const tokenizer = tokenizerHolder.getTokenizer();
+    if (!model || !tokenizer) {
+      // Neural assets not loaded (not yet bundled pending the license decision — see
+      // InputMethodService.loadNeuralModel()/loadTokenizer() — or failed to load). Stays on
+      // the static-only ranking already assigned above; this is the sanctioned degrade path.
+      return;
+    }
+    const scorer = new NeuralScorer(model, tokenizer);
+    const context: ScoringContext = { precedingWords: this.composition.committedHistory() };
+    const reranked = await rerankWithNeuralScorer(staticRanked, context, scorer);
+    // The user may have kept typing while the reranking above was in flight — if the
+    // composition buffer has since moved on, this result is for a buffer that's no longer
+    // current, so drop it rather than clobber whatever refreshCandidates() call came after.
+    if (this.composition.compositionText !== buffer) {
+      return;
+    }
+    this.candidates = reranked;
   }
 
   @Builder
