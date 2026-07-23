@@ -1,11 +1,31 @@
 import { Dictionary } from './Dictionary';
 import { segment } from './Segmenter';
 import { CandidateEntry, DictionaryEntry } from './types';
+import { CandidateScorer, ScoringContext, StaticWeightScorer } from './CandidateScorer';
+
+// rankAndTruncate() scores every candidate against this context regardless of which scorer is
+// injected. StaticWeightScorer (the default) ignores context entirely, so an empty one is a
+// harmless placeholder for it. A context-aware rerank (NeuralScorer) doesn't go through this
+// function at all — see pinyin/NeuralScorer.ets's rankCandidates(), which re-scores this
+// function's own (StaticWeightScorer-ranked) result with the real committed context (issue #20,
+// reworked into a single async facade by issue #22 D6).
+const NO_CONTEXT: ScoringContext = { precedingWords: [] };
 
 // Display-count cap applied only after the full candidate set is merged and ranked (see
 // generateCandidates) — never as an earlier recall cutoff. Named/injectable rather than a
 // magic number, mirroring BigramScorer.DEFAULT_BIGRAM_COEFFICIENT's style (issue #15).
-export const DEFAULT_DISPLAY_LIMIT: number = 50;
+//
+// 9, not the pre-#22 value of 50: issue #22 D3 ties this to the neural model's batch size —
+// ArkTS's MindSpore Lite binding only supports a fixed shape baked in at conversion time (no
+// runtime resize, see xupin/docs/spike-20-neural-ranking.md §4), so the number of candidates
+// that get a neural score in one forward pass is fixed by the converted .ms file, not by a
+// runtime parameter. Making the display limit and the batch size the same number means every
+// candidate the user can actually see was scored by the same pass — no mixing a neurally-scored
+// head with a static-only tail. NeuralScorer.ets's DEFAULT_BATCH_SIZE re-exports this constant
+// rather than redeclaring it, so the two can't drift apart. Changing this value requires
+// re-running the model conversion (xupin/docs/issue-22-shape-fix.md §5) — it is not a
+// recompile-only change.
+export const DEFAULT_DISPLAY_LIMIT: number = 9;
 
 // A candidate paired with its original merge-order position, so ties (equal weight) keep a
 // deterministic order via the index tiebreak instead of depending on Array.sort's stability
@@ -36,12 +56,17 @@ interface WeightedCandidate {
  *
  * The two sets are merged and deduped by (word, matchedLength), then the whole merged set
  * is ranked and only then truncated to DEFAULT_DISPLAY_LIMIT — scoring never runs on a
- * pre-truncated subset, so a low-static-weight candidate that a future context-aware
- * scorer would rank highly is never discarded before it gets scored.
+ * pre-truncated subset, so a low-static-weight candidate that a context-aware scorer would
+ * rank highly is never discarded before it gets scored.
+ *
+ * `scorer` defaults to a fresh StaticWeightScorer, so omitting it reproduces this repo's
+ * pre-#20 behavior exactly (regression-tested in CandidateGenerator.test.ets) — ranking by
+ * `ln(weight+1)` sorts identically to ranking by raw `weight`, since `ln` is monotonic.
  */
 export function generateCandidates(
   buffer: string,
   dictionary: Dictionary,
+  scorer?: CandidateScorer,
   displayLimit?: number
 ): CandidateEntry[] {
   if (buffer.length === 0) {
@@ -51,7 +76,7 @@ export function generateCandidates(
   const looked = lookupCandidates(buffer, dictionary, paths);
   const prefixed = prefixCandidates(buffer, dictionary);
   const merged = mergeCandidates(looked, prefixed);
-  return rankAndTruncate(merged, displayLimit ?? DEFAULT_DISPLAY_LIMIT);
+  return rankAndTruncate(merged, displayLimit ?? DEFAULT_DISPLAY_LIMIT, scorer ?? new StaticWeightScorer());
 }
 
 // The #5 candidate-set lookup, untouched: whole-buffer hit first, else longest legal prefix
@@ -103,16 +128,16 @@ function mergeCandidates(a: CandidateEntry[], b: CandidateEntry[]): CandidateEnt
   return merged;
 }
 
-// Scores the merged set by weight (the only scorer this issue has — see file doc) and only
-// then truncates to displayLimit, so truncation can never discard a candidate the scoring
-// step hasn't seen yet.
-function rankAndTruncate(entries: CandidateEntry[], displayLimit: number): CandidateEntry[] {
+// Scores the merged set via the injected scorer and only then truncates to displayLimit, so
+// truncation can never discard a candidate the scoring step hasn't seen yet.
+function rankAndTruncate(entries: CandidateEntry[], displayLimit: number, scorer: CandidateScorer): CandidateEntry[] {
   const weighted = entries.map((entry: CandidateEntry, index: number): WeightedCandidate => {
     return { entry, index };
   });
   weighted.sort((a: WeightedCandidate, b: WeightedCandidate): number => {
-    if (b.entry.weight !== a.entry.weight) {
-      return b.entry.weight - a.entry.weight;
+    const scoreDiff = scorer.score(NO_CONTEXT, b.entry) - scorer.score(NO_CONTEXT, a.entry);
+    if (scoreDiff !== 0) {
+      return scoreDiff;
     }
     return a.index - b.index;
   });

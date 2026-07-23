@@ -1,6 +1,8 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { Dictionary } from '../../main/ets/pinyin/Dictionary';
 import { generateCandidates } from '../../main/ets/pinyin/CandidateGenerator';
+import { CandidateScorer, ScoringContext } from '../../main/ets/pinyin/CandidateScorer';
+import { CandidateEntry } from '../../main/ets/pinyin/types';
 
 // Key-sorted ascending (see Dictionary's class doc) — generateCandidates() now always
 // consults prefixLookup() too, which relies on that order, so an unsorted fixture would
@@ -116,8 +118,11 @@ export default function candidateGeneratorTest() {
 
     it('ranks the full merged candidate set by weight before truncating to the display limit — no early recall cutoff (issue #15)', 0, () => {
       // 80 candidates share the "zz" prefix; the highest-weight one sorts LAST in key
-      // order. A "truncate the first 50 keys, then score" bug would drop it before it's
+      // order. A "truncate the first N keys, then score" bug would drop it before it's
       // ever scored — the correct "score everything, then truncate" pipeline keeps it.
+      // Display limit is 9 (issue #22 D3: == the neural model's batch size), not #15's
+      // original 50 — this test only cares that truncation happens after scoring, not the
+      // exact cap value, so it still uses a candidate pool much larger than the cap.
       const lines: string[] = [];
       for (let i = 0; i < 79; i++) {
         const suffix = i < 10 ? '0' + i.toString() : i.toString();
@@ -127,9 +132,29 @@ export default function candidateGeneratorTest() {
       const dict = Dictionary.parse(lines.join('\n'));
 
       const results = generateCandidates('zz', dict);
-      expect(results.length).assertEqual(50);
+      expect(results.length).assertEqual(9);
       expect(results[0].word).assertEqual('winner');
       expect(results[0].weight).assertEqual(100000);
+    });
+
+    it('an injected scorer changes ranking (issue #20); omitting it keeps this repo\'s original weight order', 0, () => {
+      const dict = Dictionary.parse(FIXTURE);
+
+      // No scorer passed: identical to the pre-#20 order (same assertions as "surfaces every
+      // dictionary reading of an ambiguous buffer" above) — the regression case.
+      const defaultOrder = generateCandidates('xian', dict);
+      expect(defaultOrder[0].word).assertEqual('先');
+      expect(defaultOrder[1].word).assertEqual('西安');
+      expect(defaultOrder[2].word).assertEqual('现');
+
+      class AlwaysPreferXianScorer implements CandidateScorer {
+        score(context: ScoringContext, candidate: CandidateEntry): number {
+          return candidate.word === '现' ? 1000 : candidate.weight;
+        }
+      }
+      const reordered = generateCandidates('xian', dict, new AlwaysPreferXianScorer());
+      expect(reordered.length).assertEqual(3);
+      expect(reordered[0].word).assertEqual('现'); // only the injected scorer prefers this
     });
   });
 }
