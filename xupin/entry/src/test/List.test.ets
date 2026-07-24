@@ -6,6 +6,7 @@ import compositionStateTest from './InputMethodExtensionAbility/model/Compositio
 import candidateScorerTest from './pinyin/CandidateScorer.test';
 import tokenizerTest from './pinyin/Tokenizer.test';
 import neuralScorerTest from './pinyin/NeuralScorer.test';
+import neuralRerankSchedulerTest from './InputMethodExtensionAbility/model/NeuralRerankScheduler.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -16,4 +17,5 @@ export default function testsuite() {
   candidateScorerTest();
   tokenizerTest();
   neuralScorerTest();
+  neuralRerankSchedulerTest();
 }

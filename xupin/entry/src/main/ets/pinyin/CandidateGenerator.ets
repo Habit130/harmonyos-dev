@@ -15,17 +15,18 @@ const NO_CONTEXT: ScoringContext = { precedingWords: [] };
 // generateCandidates) — never as an earlier recall cutoff. Named/injectable rather than a
 // magic number, mirroring BigramScorer.DEFAULT_BIGRAM_COEFFICIENT's style (issue #15).
 //
-// 9, not the pre-#22 value of 50: issue #22 D3 ties this to the neural model's batch size —
-// ArkTS's MindSpore Lite binding only supports a fixed shape baked in at conversion time (no
-// runtime resize, see xupin/docs/spike-20-neural-ranking.md §4), so the number of candidates
-// that get a neural score in one forward pass is fixed by the converted .ms file, not by a
-// runtime parameter. Making the display limit and the batch size the same number means every
-// candidate the user can actually see was scored by the same pass — no mixing a neurally-scored
-// head with a static-only tail. NeuralScorer.ets's DEFAULT_BATCH_SIZE re-exports this constant
-// rather than redeclaring it, so the two can't drift apart. Changing this value requires
-// re-running the model conversion (xupin/docs/issue-22-shape-fix.md §5) — it is not a
-// recompile-only change.
-export const DEFAULT_DISPLAY_LIMIT: number = 9;
+// Originally 9 (issue #22 D3: tied to the neural model's batch size), shrunk to 5 by issue #24
+// phase 3 (predict() latency still >>300ms after phase 2's runtime params alone) — ArkTS's
+// MindSpore Lite binding only supports a fixed shape baked in at conversion time (no runtime
+// resize, see xupin/docs/spike-20-neural-ranking.md §4), so the number of candidates that get a
+// neural score in one forward pass is fixed by the converted .ms file, not by a runtime
+// parameter. Making the display limit and the batch size the same number means every candidate
+// the user can actually see was scored by the same pass — no mixing a neurally-scored head with
+// a static-only tail. NeuralScorer.ets's DEFAULT_BATCH_SIZE re-exports this constant rather than
+// redeclaring it, so the two can't drift apart. Changing this value requires re-running the
+// model conversion (xupin/docs/issue-22-shape-fix.md §5, xupin/docs/issue-24-phase3-shape-
+// shrink.md) — it is not a recompile-only change.
+export const DEFAULT_DISPLAY_LIMIT: number = 5;
 
 // A candidate paired with its original merge-order position, so ties (equal weight) keep a
 // deterministic order via the index tiebreak instead of depending on Array.sort's stability

@@ -4,8 +4,10 @@ import { dictionaryHolder } from '../model/DictionaryHolder';
 import { tokenizerHolder } from '../model/TokenizerHolder';
 import { neuralModelHolder } from '../model/NeuralModelHolder';
 import { CompositionState } from '../model/CompositionState';
+import { NeuralRerankScheduler, TimerScheduler } from '../model/NeuralRerankScheduler';
 import { generateCandidates } from '../../pinyin/CandidateGenerator';
 import { CandidateEntry } from '../../pinyin/types';
+import { Dictionary } from '../../pinyin/Dictionary';
 import { NeuralScorer, RankedCandidates, rankCandidates } from '../../pinyin/NeuralScorer';
 import { ScoringContext } from '../../pinyin/CandidateScorer';
 
@@ -54,8 +56,16 @@ struct Index {
   @StorageLink('xupinCompositionResetSeq') @Watch('onCompositionResetSeqChange') compositionResetSeq: number = 0;
 
   private composition: CompositionState = new CompositionState();
+  // Issue #24 E1/E2: replaces #22's D6 (one rerank per keystroke) — a keystroke assigns
+  // static candidates immediately (see refreshCandidates()) and only requests a neural
+  // rerank through this scheduler, which fires at most once per burst of typing.
+  private readonly neuralRerankScheduler: NeuralRerankScheduler = new NeuralRerankScheduler(new TimerScheduler());
 
   private onCompositionResetSeqChange(): void {
+    // No refreshCandidates() call follows in this branch (unlike confirm()/onLetterKey()), so
+    // this is the one call site that must cancel a pending rerank explicitly rather than
+    // relying on request()'s own cancel-then-reschedule.
+    this.neuralRerankScheduler.cancel();
     this.composition = new CompositionState();
     this.compositionText = '';
     this.candidates = [];
@@ -66,8 +76,14 @@ struct Index {
   // the target field (IMEKit's setPreviewText isn't supported by every target editor, and
   // no acceptance criterion needs the target field touched mid-composition). So a letter
   // key never calls insertTextSync — only a confirmed candidate or literal does.
+  // Issue #24 diagnostic (not a permanent feature): a real-device debounce test showed 3
+  // predict() calls for one "gongji" burst instead of the expected 1, and hilog's own per-line
+  // timestamp is enough to answer "was that real per-key pauses >200ms, or a debounce bug" —
+  // this line's timestamp lets a human line it up directly against
+  // MindSporeNeuralModel.predict()'s timing log without adding any elapsed-time computation here.
   private onLetterKey(letter: string): void {
     this.composition.typeLetter(letter);
+    hilog.info(DOMAIN, TAG, 'onLetterKey: %{public}s (buffer=%{public}s)', letter, this.composition.compositionText);
     this.refreshCandidates();
   }
 
@@ -132,31 +148,42 @@ struct Index {
     return { word: raw, weight: 0, matchedLength: raw.length };
   }
 
-  // Async since issue #20; issue #22 D6 changed this to exactly one UI assignment per keystroke
-  // (was two: an immediate static-only assignment, then an overwrite once the neural rerank
-  // resolved). **Compile-only verified** — see xupin/docs/issue-22-shape-fix.md and
-  // xupin/docs/spike-20-neural-ranking.md for why the neural path itself can't be exercised
-  // off-device; the static-only path (dictionary present, neural assets absent) is the same
-  // code that was already real-device-verified pre-#20.
-  private async refreshCandidates(): Promise<void> {
+  // Issue #24 E1: two-stage, replacing #22's D6 (one rerank + one UI assignment per keystroke,
+  // revoked — real-device measurement showed batching alone doesn't buy back the latency D6
+  // assumed it would). Stage 1 (below, synchronous) assigns static candidates immediately.
+  // Stage 2 (runNeuralRerank()) is requested through neuralRerankScheduler and only actually
+  // runs once typing has paused for DEFAULT_NEURAL_DEBOUNCE_MS — see NeuralRerankScheduler.ets.
+  // D3's invariant (the full mixed ranking, not a "neural as patch" partial rerank) is
+  // preserved: stage 2 still calls the same rankCandidates() facade as before, unchanged.
+  private refreshCandidates(): void {
     const buffer = this.composition.compositionText;
     this.compositionText = buffer;
     const dictionary = dictionaryHolder.getDictionary();
     if (!dictionary || buffer.length === 0) {
+      this.neuralRerankScheduler.cancel();
       this.candidates = [];
       this.neuralRanked = false;
       return;
     }
 
-    // Issue #22 D8: turn the "neural participated" style off the instant this keystroke starts
-    // being processed. `this.candidates` is deliberately left untouched here (still the
-    // previous keystroke's list) until the single assignment below, so the bar never flashes
-    // empty or shows an intermediate static-only reorder while a batched forward pass is in
-    // flight — the same flag doubles as "still computing" and "this round has no neural score"
-    // (D8: "同一个样式通道同时表达「正在算」和「没生效」"); both render identically, see
-    // candidateBar()/firstCandidateStyle().
+    // Stage 1: static candidates, up immediately. Issue #22 D7's style channel still means
+    // "neural hasn't produced this round's order" — during the debounce wait that's simply
+    // true (not a new degrade path, see issue #24's explicit note on this).
+    this.candidates = generateCandidates(buffer, dictionary);
     this.neuralRanked = false;
 
+    // Stage 2: debounced. request() cancels whatever the previous keystroke scheduled, so a
+    // burst of keystrokes never runs more than one predict() — only the last request() in the
+    // burst survives to fire.
+    this.neuralRerankScheduler.request((): void => {
+      this.runNeuralRerank(buffer, dictionary);
+    });
+  }
+
+  // Issue #24 phase 0: one end-to-end timing line wrapping the whole rankCandidates() call —
+  // the "outer layer" measurement the latency investigation is gated on, paired with
+  // MindSporeNeuralModel.predict()'s internal segment timestamps.
+  private async runNeuralRerank(buffer: string, dictionary: Dictionary): Promise<void> {
     const model = neuralModelHolder.getModel();
     const tokenizer = tokenizerHolder.getTokenizer();
     const scorer = model && tokenizer ? new NeuralScorer(model, tokenizer) : undefined;
@@ -165,11 +192,13 @@ struct Index {
       // trace ("the sanctioned degrade path"). Every keystroke while assets are missing now
       // logs at error level, distinguishable from an inference failure below by message text.
       hilog.error(DOMAIN, TAG,
-        'refreshCandidates: neural assets missing (model loaded=%{public}s, tokenizer loaded=%{public}s), staying on static ranking',
+        'runNeuralRerank: neural assets missing (model loaded=%{public}s, tokenizer loaded=%{public}s), staying on static ranking',
         String(model !== undefined), String(tokenizer !== undefined));
+      return; // stage 1's static candidates stay on screen, this.neuralRanked already false
     }
     const context: ScoringContext = { precedingWords: this.composition.committedHistory() };
 
+    const start = Date.now();
     let result: RankedCandidates;
     try {
       result = await rankCandidates(buffer, dictionary, context, scorer);
@@ -181,21 +210,22 @@ struct Index {
       // messages where relevant (issue #22 acceptance criteria: both categories must be
       // separately diagnosable from the log alone).
       const message = err instanceof Error ? err.message : String(err);
-      hilog.error(DOMAIN, TAG, 'refreshCandidates: neural inference failed, staying on static ranking: %{public}s',
-        message);
-      if (this.composition.compositionText !== buffer) {
-        return;
-      }
-      this.candidates = generateCandidates(buffer, dictionary);
-      return; // this.neuralRanked is already false, set at the top of this call
+      hilog.error(DOMAIN, TAG,
+        'runNeuralRerank: neural inference failed after %{public}dms, staying on static ranking: %{public}s',
+        Date.now() - start, message);
+      return; // stage 1's static candidates stay on screen, this.neuralRanked already false
     }
+    const elapsed = Date.now() - start;
 
-    // The user may have kept typing while the batched forward pass above was in flight — if the
-    // composition buffer has since moved on, this result is for a buffer that's no longer
-    // current, so drop it rather than clobber whatever refreshCandidates() call came after.
+    // The user may have resumed typing while the batched forward pass above was in flight — if
+    // the composition buffer has since moved on, this result is for a buffer that's no longer
+    // current, so drop it rather than clobber whatever keystroke/rerank came after.
     if (this.composition.compositionText !== buffer) {
+      hilog.info(DOMAIN, TAG, 'runNeuralRerank: finished in %{public}dms but buffer moved on, discarding', elapsed);
       return;
     }
+    hilog.info(DOMAIN, TAG, 'runNeuralRerank: end-to-end %{public}dms (neuralRanked=%{public}s)', elapsed,
+      String(result.neuralRanked));
     this.candidates = result.candidates;
     this.neuralRanked = result.neuralRanked;
   }

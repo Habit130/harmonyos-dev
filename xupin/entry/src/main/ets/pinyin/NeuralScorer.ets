@@ -12,16 +12,23 @@ import { generateCandidates, DEFAULT_DISPLAY_LIMIT } from './CandidateGenerator'
 // length (the other half is DEFAULT_MAX_CANDIDATE_TOKENS below) — SEQUENCE_LENGTH is baked into
 // the converted .ms file's tensor shape (xupin/docs/issue-22-shape-fix.md §5), so changing this
 // number requires re-running the conversion scripts and re-bundling the model, not just
-// recompiling ArkTS.
+// recompiling ArkTS. Unchanged by issue #24 phase 3's N/SEQ shrink — only
+// DEFAULT_MAX_CANDIDATE_TOKENS moved, taking SEQUENCE_LENGTH from 20 to 16.
 export const DEFAULT_CONTEXT_WINDOW_CHARS: number = 12;
 
-// Max candidate token count scored per row (issue #22 D4): the dictionary's own word-length
-// distribution puts 99.94% of entries at <=8 characters (the remaining 0.06%, 125 entries, get
-// scored on only their first 8 tokens — meanTeacherForcedLogProb is already length-normalized,
-// so this is a truncated estimate, not a degraded one). Paired with
-// DEFAULT_CONTEXT_WINDOW_CHARS to make the model's fixed 20-token sequence length; see that
+// Max candidate token count scored per row. Originally 8 (issue #22 D4: the dictionary's
+// word-length distribution puts 99.94% of entries at <=8 characters), shrunk to 4 by issue #24
+// phase 3 (predict() latency still >>300ms after phase 2's runtime params alone) — at <=4
+// characters the same dictionary still covers 96.46% of entries (201266/208652; the remaining
+// 3.54%, 7386 entries, get scored on only their first 4 tokens — meanTeacherForcedLogProb is
+// already length-normalized, so this is a truncated estimate, not a degraded one). A candidate
+// token-cap of 2 was considered and rejected (xupin/docs/issue-24-phase3-shape-shrink.md): it
+// only takes SEQUENCE_LENGTH from 16 to 14 (the smallest of the three phase-3 levers) while
+// making any two candidates that share their first 2 tokens (e.g. "社会主义"/"社会上") score
+// identically, losing discrimination that matters for Chinese multi-character candidates. Paired
+// with DEFAULT_CONTEXT_WINDOW_CHARS to make the model's fixed 16-token sequence length; see that
 // constant's doc for why both are model-resource parameters now.
-export const DEFAULT_MAX_CANDIDATE_TOKENS: number = 8;
+export const DEFAULT_MAX_CANDIDATE_TOKENS: number = 4;
 
 // Batch size == the candidate bar's display cap (issue #22 D3): ArkTS's MindSpore Lite binding
 // only runs a shape baked in at conversion time (no runtime resize —
@@ -34,10 +41,11 @@ export const DEFAULT_BATCH_SIZE: number = DEFAULT_DISPLAY_LIMIT;
 /**
  * One read-only view over a single batch row's `[sequenceLength, vocabSize]` logits — the
  * abstraction that lets MindSporeNeuralModel.ets hand back a thin accessor over its raw
- * `Float32Array` instead of materializing a `number[][]` per row (issue #22 D9: at
+ * `Float32Array` instead of materializing a `number[][]` per row (issue #22 D9: at the original
  * `[9, 20, 21128]` output size, that materialization was ~15.2MB of nested-array allocation and
- * copying per keystroke). Test fakes can implement this over a plain nested array instead — see
- * NeuralScorer.test.ets's `arrayRowLogits()`.
+ * copying per keystroke; issue #24 phase 3 shrank the shape to `[5, 16, 21128]`, but the
+ * avoided-allocation rationale still holds). Test fakes can implement this over a plain nested
+ * array instead — see NeuralScorer.test.ets's `arrayRowLogits()`.
  */
 export interface RowLogits {
   readonly vocabSize: number;
@@ -389,9 +397,10 @@ function sortByScore(entries: CandidateEntry[], context: ScoringContext, scorer:
  * still calls `generateCandidates()` (StaticWeightScorer, full recall-then-truncate per issue
  * #15) to build the shortlist before any neural work happens — issue #22's explicit "对#15的真实
  * 偏离" note 3 is that only this already-truncated shortlist (now `DEFAULT_DISPLAY_LIMIT` == the
- * neural batch size) ever gets a neural score; a candidate that didn't make the static top-9
- * cannot be recovered by a stronger neural opinion. That limitation already existed pre-#22 (the
- * old `rerankWithNeuralScorer`'s `DEFAULT_NEURAL_RERANK_LIMIT` window), #22 just makes the window
+ * neural batch size, 5 as of issue #24 phase 3) ever gets a neural score; a candidate that didn't
+ * make the static top-N cannot be recovered by a stronger neural opinion. That limitation already
+ * existed pre-#22 (the old `rerankWithNeuralScorer`'s `DEFAULT_NEURAL_RERANK_LIMIT` window), #22
+ * just makes the window
  * and the display limit the same number instead of two independently-tunable ones.
  *
  * `scorer` is `undefined` exactly when the neural assets (model/tokenizer) aren't loaded —

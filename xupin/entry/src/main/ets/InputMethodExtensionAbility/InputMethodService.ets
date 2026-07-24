@@ -24,6 +24,28 @@ const DICT_RAWFILE_PATH = 'dict/words.dict.tsv';
 const NEURAL_VOCAB_RAWFILE_PATH = 'model/vocab.txt';
 const NEURAL_MODEL_RAWFILE_PATH = 'model/neural_scorer.ms';
 
+// Issue #24 phase 2: `msContext.cpu = {}` alone leaves every runtime knob at MindSpore Lite
+// Kit's default (threadNum=2, threadAffinityMode=NO_AFFINITIES, precisionMode='enforce_fp32' —
+// `~/Documents/HarmonyOSDocs/.../apis-mindspore-lite-kit/js-apis-mindSporeLite.md:511-514`),
+// which phase 0's real-device measurement (xupin/docs/issue-24-phase0-instrumentation.md) showed
+// costs ~735-765ms per predict() call, ~98% of it inside predict() itself — these three knobs are
+// the no-reconversion, no-redeploy lever on that. Values match the official MindSpore Lite ArkTS
+// sample's own explicit settings (docs/harmonyos-guides/AI/MindSpore Lite Kit（昇思推理框架服务）/
+// 使用MindSpore Lite实现图像分类（ArkTS）.md:83-89).
+//
+// precisionMode reverted to 'enforce_fp32' (2026-07-24): real-device testing after this phase's
+// first commit reported neural ranking looked completely inactive (no style/reorder at all, "like
+// a generic IME") — exactly the symptom of loadNeuralModel() failing silently (its .catch() only
+// hilog.warns, see below) if this checkpoint's chip doesn't support 'preferred_fp16'
+// ("preferred" is not "guaranteed", per that doc line). This was the one revert path issue #24
+// itself pre-authorized independently of threadNum/threadAffinityMode
+// (xupin/docs/issue-24-phase2-runtime-params.md item 2) — reverted first as the leading, cheap,
+// already-approved suspect; still needs a hilog-confirmed root cause (see that doc's "回退+复测"
+// section) before this note can be trusted as the actual explanation rather than just the fix.
+const NEURAL_THREAD_NUM: number = 4;
+const NEURAL_THREAD_AFFINITY_MODE: mindSporeLite.ThreadAffinityMode = mindSporeLite.ThreadAffinityMode.BIG_CORES_FIRST;
+const NEURAL_PRECISION_MODE: string = 'enforce_fp32';
+
 let panel: inputMethodEngine.Panel | undefined = undefined;
 
 export default class InputMethodService extends InputMethodExtensionAbility {
@@ -140,6 +162,12 @@ export default class InputMethodService extends InputMethodExtensionAbility {
         const msContext: mindSporeLite.Context = {};
         msContext.target = ['cpu'];
         msContext.cpu = {};
+        msContext.cpu.threadNum = NEURAL_THREAD_NUM;
+        msContext.cpu.threadAffinityMode = NEURAL_THREAD_AFFINITY_MODE;
+        // NEURAL_PRECISION_MODE is 'enforce_fp32' (reverted from 'preferred_fp16' — see that
+        // constant's doc above). Kept as its own named constant, not inlined, in case a future
+        // round narrows the earlier regression down to something else and fp16 gets retried.
+        msContext.cpu.precisionMode = NEURAL_PRECISION_MODE;
         return mindSporeLite.loadModelFromBuffer(bytes.buffer.slice(0), msContext);
       })
       .then((model: mindSporeLite.Model) => {

@@ -1,5 +1,9 @@
 import { mindSporeLite } from '@kit.MindSporeLiteKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BatchRow, FlatBatchLogits, NeuralModel, RowLogits } from '../../pinyin/NeuralScorer';
+
+const DOMAIN = 0x0000;
+const TAG = 'XupinIME';
 
 /**
  * Wraps a loaded MindSpore Lite Kit model as a NeuralModel (pinyin/NeuralScorer.ets's batch
@@ -20,8 +24,9 @@ import { BatchRow, FlatBatchLogits, NeuralModel, RowLogits } from '../../pinyin/
  *
  * Issue #22 D2/D9: one `predict()` call handles the whole batch (was one call per candidate
  * pre-#22), and reads `logits` directly off the returned `Float32Array` via a thin per-row
- * accessor (RowLogits) instead of materializing a `number[][][]` — at `[9, 20, 21128]` that
- * would be ~15.2MB of nested-array allocation and element-by-element copying per keystroke.
+ * accessor (RowLogits) instead of materializing a `number[][][]` — at the original `[9, 20,
+ * 21128]` shape that would be ~15.2MB of nested-array allocation and element-by-element copying
+ * per keystroke (issue #24 phase 3 shrank the shape to `[5, 16, 21128]`).
  */
 export class MindSporeNeuralModel implements NeuralModel {
   private readonly model: mindSporeLite.Model;
@@ -30,23 +35,35 @@ export class MindSporeNeuralModel implements NeuralModel {
     this.model = model;
   }
 
+  // Issue #24 phase 0: segment timestamps around the three steps most likely to dominate
+  // (setData, the actual inference call, getData()+Float32Array conversion) — this is the
+  // measurement the whole latency-optimization issue is gated on, so it stays in the shipped
+  // path rather than behind a debug flag (hilog.info is cheap; a human reads it on-device via
+  // `hilog` while typing the PRD example, see xupin/docs/issue-24-phase0-instrumentation.md).
   async predict(rows: BatchRow[]): Promise<RowLogits[]> {
     const batchSize = rows.length;
     const sequenceLength = batchSize > 0 ? rows[0].tokenIds.length : 0;
 
+    const t0 = Date.now();
     const inputs = this.model.getInputs();
     for (let i = 0; i < inputs.length; i++) {
       const tensor = inputs[i];
       tensor.setData(encodeInts(valuesFor(tensor.name, rows, sequenceLength), tensor.dtype));
     }
+    const t1 = Date.now();
 
     const outputs = await this.model.predict(inputs);
+    const t2 = Date.now();
     // Single `logits` output per the no-cache export shape (see this file's doc) — the
     // KV-cache graph's extra present.N.{key,value} outputs don't apply here.
     const logitsTensor = outputs[0];
     const shape = logitsTensor.shape;
     const vocabSize = shape[shape.length - 1];
     const flat = new Float32Array(logitsTensor.getData());
+    const t3 = Date.now();
+    hilog.info(DOMAIN, TAG,
+      'MindSporeNeuralModel.predict timings (ms): setData=%{public}d predict=%{public}d getData=%{public}d total=%{public}d (batch=%{public}d seq=%{public}d vocab=%{public}d)',
+      t1 - t0, t2 - t1, t3 - t2, t3 - t0, batchSize, sequenceLength, vocabSize);
     const expectedLength = batchSize * sequenceLength * vocabSize;
     if (flat.length !== expectedLength) {
       throw new Error('MindSporeNeuralModel: logits tensor "' + logitsTensor.name + '" dataSize ' +
