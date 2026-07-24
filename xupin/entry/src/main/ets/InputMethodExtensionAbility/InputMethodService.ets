@@ -24,6 +24,21 @@ const DICT_RAWFILE_PATH = 'dict/words.dict.tsv';
 const NEURAL_VOCAB_RAWFILE_PATH = 'model/vocab.txt';
 const NEURAL_MODEL_RAWFILE_PATH = 'model/neural_scorer.ms';
 
+// Issue #24 phase 2: `msContext.cpu = {}` alone leaves every runtime knob at MindSpore Lite
+// Kit's default (threadNum=2, threadAffinityMode=NO_AFFINITIES, precisionMode='enforce_fp32' —
+// `~/Documents/HarmonyOSDocs/.../apis-mindspore-lite-kit/js-apis-mindSporeLite.md:511-514`),
+// which phase 0's real-device measurement (xupin/docs/issue-24-phase0-instrumentation.md) showed
+// costs ~735-765ms per predict() call, ~98% of it inside predict() itself — these three knobs are
+// the no-reconversion, no-redeploy lever on that. Values match the official MindSpore Lite ArkTS
+// sample's own explicit settings (docs/harmonyos-guides/AI/MindSpore Lite Kit（昇思推理框架服务）/
+// 使用MindSpore Lite实现图像分类（ArkTS）.md:83-89), except precisionMode: the sample uses
+// 'enforce_fp32', this project opts into 'preferred_fp16' for the speed win, per issue #24's own
+// instruction that this needs real-device confirmation the PRD example still flips before it can
+// be trusted (see loadNeuralModel()'s call site comment) — revert only this one constant if not.
+const NEURAL_THREAD_NUM: number = 4;
+const NEURAL_THREAD_AFFINITY_MODE: mindSporeLite.ThreadAffinityMode = mindSporeLite.ThreadAffinityMode.BIG_CORES_FIRST;
+const NEURAL_PRECISION_MODE: string = 'preferred_fp16';
+
 let panel: inputMethodEngine.Panel | undefined = undefined;
 
 export default class InputMethodService extends InputMethodExtensionAbility {
@@ -140,6 +155,15 @@ export default class InputMethodService extends InputMethodExtensionAbility {
         const msContext: mindSporeLite.Context = {};
         msContext.target = ['cpu'];
         msContext.cpu = {};
+        msContext.cpu.threadNum = NEURAL_THREAD_NUM;
+        msContext.cpu.threadAffinityMode = NEURAL_THREAD_AFFINITY_MODE;
+        // preferred_fp16 changes numerical precision, not just speed — human real-device
+        // verification must confirm the PRD example (发起/物资 -> gongji prefers 供给) still
+        // flips under it before trusting this default (issue #24 phase 2 item 2). If it
+        // doesn't, revert only NEURAL_PRECISION_MODE to 'enforce_fp32' and record why —
+        // threadNum/threadAffinityMode are independent of this and shouldn't be rolled back
+        // together with it.
+        msContext.cpu.precisionMode = NEURAL_PRECISION_MODE;
         return mindSporeLite.loadModelFromBuffer(bytes.buffer.slice(0), msContext);
       })
       .then((model: mindSporeLite.Model) => {
