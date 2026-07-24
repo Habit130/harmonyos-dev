@@ -31,13 +31,20 @@ const NEURAL_MODEL_RAWFILE_PATH = 'model/neural_scorer.ms';
 // costs ~735-765ms per predict() call, ~98% of it inside predict() itself — these three knobs are
 // the no-reconversion, no-redeploy lever on that. Values match the official MindSpore Lite ArkTS
 // sample's own explicit settings (docs/harmonyos-guides/AI/MindSpore Lite Kit（昇思推理框架服务）/
-// 使用MindSpore Lite实现图像分类（ArkTS）.md:83-89), except precisionMode: the sample uses
-// 'enforce_fp32', this project opts into 'preferred_fp16' for the speed win, per issue #24's own
-// instruction that this needs real-device confirmation the PRD example still flips before it can
-// be trusted (see loadNeuralModel()'s call site comment) — revert only this one constant if not.
+// 使用MindSpore Lite实现图像分类（ArkTS）.md:83-89).
+//
+// precisionMode reverted to 'enforce_fp32' (2026-07-24): real-device testing after this phase's
+// first commit reported neural ranking looked completely inactive (no style/reorder at all, "like
+// a generic IME") — exactly the symptom of loadNeuralModel() failing silently (its .catch() only
+// hilog.warns, see below) if this checkpoint's chip doesn't support 'preferred_fp16'
+// ("preferred" is not "guaranteed", per that doc line). This was the one revert path issue #24
+// itself pre-authorized independently of threadNum/threadAffinityMode
+// (xupin/docs/issue-24-phase2-runtime-params.md item 2) — reverted first as the leading, cheap,
+// already-approved suspect; still needs a hilog-confirmed root cause (see that doc's "回退+复测"
+// section) before this note can be trusted as the actual explanation rather than just the fix.
 const NEURAL_THREAD_NUM: number = 4;
 const NEURAL_THREAD_AFFINITY_MODE: mindSporeLite.ThreadAffinityMode = mindSporeLite.ThreadAffinityMode.BIG_CORES_FIRST;
-const NEURAL_PRECISION_MODE: string = 'preferred_fp16';
+const NEURAL_PRECISION_MODE: string = 'enforce_fp32';
 
 let panel: inputMethodEngine.Panel | undefined = undefined;
 
@@ -157,12 +164,9 @@ export default class InputMethodService extends InputMethodExtensionAbility {
         msContext.cpu = {};
         msContext.cpu.threadNum = NEURAL_THREAD_NUM;
         msContext.cpu.threadAffinityMode = NEURAL_THREAD_AFFINITY_MODE;
-        // preferred_fp16 changes numerical precision, not just speed — human real-device
-        // verification must confirm the PRD example (发起/物资 -> gongji prefers 供给) still
-        // flips under it before trusting this default (issue #24 phase 2 item 2). If it
-        // doesn't, revert only NEURAL_PRECISION_MODE to 'enforce_fp32' and record why —
-        // threadNum/threadAffinityMode are independent of this and shouldn't be rolled back
-        // together with it.
+        // NEURAL_PRECISION_MODE is 'enforce_fp32' (reverted from 'preferred_fp16' — see that
+        // constant's doc above). Kept as its own named constant, not inlined, in case a future
+        // round narrows the earlier regression down to something else and fp16 gets retried.
         msContext.cpu.precisionMode = NEURAL_PRECISION_MODE;
         return mindSporeLite.loadModelFromBuffer(bytes.buffer.slice(0), msContext);
       })
