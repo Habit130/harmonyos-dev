@@ -24,8 +24,9 @@ const TAG = 'XupinIME';
  *
  * Issue #22 D2/D9: one `predict()` call handles the whole batch (was one call per candidate
  * pre-#22), and reads `logits` directly off the returned `Float32Array` via a thin per-row
- * accessor (RowLogits) instead of materializing a `number[][][]` — at `[9, 20, 21128]` that
- * would be ~15.2MB of nested-array allocation and element-by-element copying per keystroke.
+ * accessor (RowLogits) instead of materializing a `number[][][]` — at the original `[9, 20,
+ * 21128]` shape that would be ~15.2MB of nested-array allocation and element-by-element copying
+ * per keystroke (issue #24 phase 3 shrank the shape to `[5, 16, 21128]`).
  */
 export class MindSporeNeuralModel implements NeuralModel {
   private readonly model: mindSporeLite.Model;
