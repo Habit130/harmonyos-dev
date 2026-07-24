@@ -76,8 +76,14 @@ struct Index {
   // the target field (IMEKit's setPreviewText isn't supported by every target editor, and
   // no acceptance criterion needs the target field touched mid-composition). So a letter
   // key never calls insertTextSync — only a confirmed candidate or literal does.
+  // Issue #24 diagnostic (not a permanent feature): a real-device debounce test showed 3
+  // predict() calls for one "gongji" burst instead of the expected 1, and hilog's own per-line
+  // timestamp is enough to answer "was that real per-key pauses >200ms, or a debounce bug" —
+  // this line's timestamp lets a human line it up directly against
+  // MindSporeNeuralModel.predict()'s timing log without adding any elapsed-time computation here.
   private onLetterKey(letter: string): void {
     this.composition.typeLetter(letter);
+    hilog.info(DOMAIN, TAG, 'onLetterKey: %{public}s (buffer=%{public}s)', letter, this.composition.compositionText);
     this.refreshCandidates();
   }
 
